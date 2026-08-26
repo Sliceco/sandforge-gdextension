@@ -6,6 +6,9 @@
 /bin/**
 !project/bin/*.gdextension
 
+# Ignore .venv files for python virtual environments
+.venv/
+
 # Ignore scons database
 .sconsign*.dblite
 
@@ -50,3 +53,4 @@ compile_commands.json
 # Cmake
 cmake-build*
 CMakeUserPresets.json
+
