@@ -11,6 +11,10 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_materials_from_dict", "materials"), &SandWorld::set_materials_from_dict);
 	ClassDB::bind_method(D_METHOD("set_particle", "pos", "mat_id"), &SandWorld::set_particle);
 	ClassDB::bind_method(D_METHOD("get_particle_mat_id", "pos"), &SandWorld::get_particle_mat_id);
+	ClassDB::bind_method(D_METHOD("brush_line", "from", "to", "mat_id", "radius"), &SandWorld::brush_line);
+	ClassDB::bind_method(D_METHOD("brush_circle", "pos", "radius", "mat_id"), &SandWorld::brush_circle);
+	ClassDB::bind_method(D_METHOD("brush_rectangle", "pos", "size", "mat_id"), &SandWorld::brush_rectangle);
+	ClassDB::bind_method(D_METHOD("explosion", "pos", "radius"), &SandWorld::explosion);
 	ClassDB::bind_method(D_METHOD("render_to_texture", "texture_size", "world_offset"), &SandWorld::render_to_texture);
 	ClassDB::bind_method(D_METHOD("tick"), &SandWorld::tick);
 	ClassDB::bind_method(D_METHOD("get_chunk_count"), &SandWorld::get_chunk_count);
@@ -156,4 +160,81 @@ void SandWorld::tick() {
 
 int SandWorld::get_chunk_count() const {
 	return world_grid.get_chunk_count();
+}
+
+void SandWorld::brush_line(Vector2i from, Vector2i to, int mat_id, int radius) {
+	// Bresenham's line algorithm with circle brush
+	int x0 = from.x, y0 = from.y;
+	int x1 = to.x, y1 = to.y;
+	
+	int dx = abs(x1 - x0);
+	int dy = abs(y1 - y0);
+	int sx = x0 < x1 ? 1 : -1;
+	int sy = y0 < y1 ? 1 : -1;
+	int err = dx - dy;
+	
+	Particle p;
+	p.mat_id = mat_id;
+	p.flags = ParticleFlags::PARTICLE_FLAG_NONE;
+	
+	int x = x0, y = y0;
+	while (true) {
+		brush_circle(Vector2i(x, y), radius, mat_id);
+		
+		if (x == x1 && y == y1)
+			break;
+		
+		int e2 = 2 * err;
+		if (e2 > -dy) {
+			err -= dy;
+			x += sx;
+		}
+		if (e2 < dx) {
+			err += dx;
+			y += sy;
+		}
+	}
+}
+
+void SandWorld::brush_circle(Vector2i pos, int radius, int mat_id) {
+	Particle p;
+	p.mat_id = mat_id;
+	p.flags = ParticleFlags::PARTICLE_FLAG_NONE;
+	
+	int r2 = radius * radius;
+	for (int dy = -radius; dy <= radius; ++dy) {
+		for (int dx = -radius; dx <= radius; ++dx) {
+			if (dx * dx + dy * dy <= r2) {
+				world_grid.set_particle(pos.x + dx, pos.y + dy, p);
+			}
+		}
+	}
+}
+
+void SandWorld::brush_rectangle(Vector2i pos, Vector2i size, int mat_id) {
+	Particle p;
+	p.mat_id = mat_id;
+	p.flags = ParticleFlags::PARTICLE_FLAG_NONE;
+	
+	for (int y = pos.y; y < pos.y + size.y; ++y) {
+		for (int x = pos.x; x < pos.x + size.x; ++x) {
+			world_grid.set_particle(x, y, p);
+		}
+	}
+}
+
+void SandWorld::explosion(Vector2i pos, int radius) {
+	// Clear particles in explosion radius (destroy effect)
+	Particle empty;
+	empty.mat_id = 0;
+	empty.flags = ParticleFlags::PARTICLE_FLAG_NONE;
+	
+	int r2 = radius * radius;
+	for (int dy = -radius; dy <= radius; ++dy) {
+		for (int dx = -radius; dx <= radius; ++dx) {
+			if (dx * dx + dy * dy <= r2) {
+				world_grid.set_particle(pos.x + dx, pos.y + dy, empty);
+			}
+		}
+	}
 }

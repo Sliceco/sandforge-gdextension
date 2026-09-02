@@ -21,7 +21,7 @@ void SandSimulationChunk::tick(bool alternate_direction) {
 		grid[i].flags &= ParticleFlags::PARTICLE_FLAG_NONE; // Clear the updated flag
 	}
 
-	// Loop bottom-to-top to let items fall naturally
+	// Phase 1: Movement pass - bottom-to-top to let items fall naturally
 	for (int y = SIZE - 1; y >= 0; --y) {
 		// Alternate horizontal scan direction to prevent bias asymmetry
 		if (alternate_direction) {
@@ -34,6 +34,13 @@ void SandSimulationChunk::tick(bool alternate_direction) {
 				if (update_particle(x, y))
 					active_this_frame = true;
 			}
+		}
+	}
+
+	// Phase 2: Reaction pass - check for chemical interactions
+	for (int y = 0; y < SIZE; ++y) {
+		for (int x = 0; x < SIZE; ++x) {
+			check_neighborhood_reactions(x, y);
 		}
 	}
 
@@ -103,4 +110,82 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	}
 
 	return false;
+}
+
+void SandSimulationChunk::check_neighborhood_reactions(int x, int y) {
+	Particle &p = grid[get_index(x, y)];
+	if (p.mat_id == 0)
+		return;  // Empty particle, skip
+
+	const MaterialConfig &config = mat_registry[p.mat_id];
+
+	// Check for acid reactions
+	if (config.acid_reactive > 0) {
+		check_acid_reactions(x, y);
+	}
+
+	// Check for fire spreading
+	if (config.flammability > 0) {
+		check_fire_reactions(x, y);
+	}
+}
+
+void SandSimulationChunk::check_acid_reactions(int x, int y) {
+	Particle &p = grid[get_index(x, y)];
+	
+	// Check all 8 neighbors for acid (ID 4, configurable)
+	const int ACID_MAT_ID = 4;
+	
+	for (int dx = -1; dx <= 1; ++dx) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			if (dx == 0 && dy == 0)
+				continue;  // Skip self
+			
+			int nx = x + dx;
+			int ny = y + dy;
+			
+			if (!in_bounds(nx, ny))
+				continue;
+			
+			Particle &neighbor = grid[get_index(nx, ny)];
+			if (neighbor.mat_id == ACID_MAT_ID) {
+				// Acid dissolves this particle with some probability
+				// Probability based on acid_reactive value (0-255)
+				if ((rand() % 256) < p.acid_reactive) {
+					p.mat_id = 0;  // Dissolve
+					return;
+				}
+			}
+		}
+	}
+}
+
+void SandSimulationChunk::check_fire_reactions(int x, int y) {
+	Particle &p = grid[get_index(x, y)];
+	
+	// Check for nearby fire (ID 5, configurable)
+	const int FIRE_MAT_ID = 5;
+	
+	for (int dx = -1; dx <= 1; ++dx) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			if (dx == 0 && dy == 0)
+				continue;
+			
+			int nx = x + dx;
+			int ny = y + dy;
+			
+			if (!in_bounds(nx, ny))
+				continue;
+			
+			Particle &neighbor = grid[get_index(nx, ny)];
+			if (neighbor.mat_id == FIRE_MAT_ID) {
+				// This particle catches fire with probability based on flammability
+				if ((rand() % 256) < p.flammability) {
+					p.mat_id = FIRE_MAT_ID;
+					p.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
+					return;
+				}
+			}
+		}
+	}
 }

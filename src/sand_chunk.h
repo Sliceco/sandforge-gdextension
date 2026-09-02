@@ -26,4 +26,9 @@ public:
 private:
 	bool update_particle(int x, int y);
 	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config);
+	
+	// Chemical reaction methods
+	void check_acid_reactions(int x, int y);
+	void check_fire_reactions(int x, int y);
+	void check_neighborhood_reactions(int x, int y);
 };

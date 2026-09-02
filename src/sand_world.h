@@ -31,6 +31,12 @@ public:
 	void set_particle(Vector2i pos, int mat_id);
 	int get_particle_mat_id(Vector2i pos) const;
 	
+	// Brush operations (Phase 4)
+	void brush_line(Vector2i from, Vector2i to, int mat_id, int radius);
+	void brush_circle(Vector2i pos, int radius, int mat_id);
+	void brush_rectangle(Vector2i pos, Vector2i size, int mat_id);
+	void explosion(Vector2i pos, int radius);
+	
 	// Rendering
 	PackedByteArray render_to_texture(Vector2i texture_size, Vector2i world_offset);
 	
