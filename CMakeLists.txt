@@ -57,6 +57,12 @@ target_sources(${LIBNAME}
     src/register_types.h
     src/example_class.cpp
     src/example_class.h
+    src/sand_chunk.cpp
+    src/sand_chunk.h
+    src/world_grid.cpp
+    src/world_grid.h
+    src/sand_world.cpp
+    src/sand_world.h
 )
 
 # Fetch a list of the xml files to use for documentation and add to our target

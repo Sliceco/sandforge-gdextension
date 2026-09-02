@@ -6,6 +6,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "example_class.h"
+#include "sand_world.h"
 
 using namespace godot;
 
@@ -15,6 +16,7 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 		return;
 	}
 	GDREGISTER_CLASS(ExampleClass);
+	GDREGISTER_CLASS(SandWorld);
 }
 
 void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
