@@ -55,6 +55,10 @@ bool SandSimulationChunk::update_particle(int x, int y) {
 	if (p.mat_id == 0 || (p.flags & ParticleFlags::PARTICLE_FLAG_UPDATED))
 		return false;
 
+	// Bounds check on material registry
+	if (p.mat_id >= (int)mat_registry.size())
+		return false;
+
 	// Get the material configuration for this particle
 	const MaterialConfig &config = mat_registry[p.mat_id];
 	if (config.state == MatterState::SOLID_FIXED)
@@ -96,10 +100,23 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	int dst_idx = get_index(dst_x, dst_y);
 	Particle &dst_p = grid[dst_idx];
 
-	const MaterialConfig &dst_config = mat_registry[dst_p.mat_id];
+	// Empty space - can always move there
+	if (dst_p.mat_id == 0)
+		goto perform_swap;
 
-	// Move into empty space or displace a lighter/less dense material (e.g. sand sinking in water)
-	if (dst_p.mat_id == 0 || (dst_config.state != MatterState::SOLID_FIXED && src_config.density > dst_config.density)) {
+	// Check if destination material is passable
+	if (dst_p.mat_id < (int)mat_registry.size()) {
+		const MaterialConfig &dst_config = mat_registry[dst_p.mat_id];
+		if (dst_config.state == MatterState::SOLID_FIXED)
+			return false;  // Solid fixed blocks cannot be displaced
+		
+		// Can displace if destination is lighter
+		if (src_config.density > dst_config.density)
+			goto perform_swap;
+	}
+	return false;
+
+perform_swap:
 		Particle temp = grid[src_idx];
 
 		grid[src_idx] = dst_p; // Swap destination item back to source
@@ -114,8 +131,8 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 
 void SandSimulationChunk::check_neighborhood_reactions(int x, int y) {
 	Particle &p = grid[get_index(x, y)];
-	if (p.mat_id == 0)
-		return;  // Empty particle, skip
+	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
+		return;  // Empty or invalid particle, skip
 
 	const MaterialConfig &config = mat_registry[p.mat_id];
 
