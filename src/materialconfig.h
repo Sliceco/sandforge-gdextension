@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "godot_cpp/variant/color.hpp"
 
 namespace godot {

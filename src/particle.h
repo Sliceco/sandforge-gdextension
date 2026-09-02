@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace godot {
 
 enum ParticleFlags : std::uint8_t {
