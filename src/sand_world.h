@@ -22,6 +22,8 @@ public:
 
 	// World management
 	void clear();
+	PackedByteArray save_snapshot() const;
+	bool load_snapshot(const PackedByteArray &snapshot);
 	
 	// Material configuration
 	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive);

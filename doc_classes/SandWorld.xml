@@ -63,6 +63,13 @@
 				Clear all particles from the simulation.
 			</description>
 		</method>
+		<method name="load_snapshot">
+			<return type="bool" />
+			<param index="0" name="snapshot" type="PackedByteArray" />
+			<description>
+				Replace the world with a snapshot created by [method save_snapshot]. Returns [code]false[/code] when the data has an invalid or unsupported format; the existing world is left unchanged.
+			</description>
+		</method>
 		<method name="explosion">
 			<return type="void" />
 			<param index="0" name="pos" type="Vector2i" />
@@ -97,6 +104,12 @@
 			<param index="0" name="materials" type="Dictionary" />
 			<description>
 				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, flammability, acid_reactive.
+			</description>
+		</method>
+		<method name="save_snapshot" qualifiers="const">
+			<return type="PackedByteArray" />
+			<description>
+				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and particle material IDs and flags, but not material definitions.
 			</description>
 		</method>
 		<method name="set_particle">

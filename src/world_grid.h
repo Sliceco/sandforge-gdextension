@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <functional>
 
+#include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
 #include "sand_chunk.h"
 
@@ -52,6 +53,10 @@ public:
 	
 	// Clear all chunks
 	void clear();
+
+	// Serialize and restore allocated chunks without exposing grid internals.
+	PackedByteArray serialize() const;
+	bool deserialize(const PackedByteArray &data);
 	
 	// Get the number of active chunks
 	int get_chunk_count() const { return chunks.size(); }

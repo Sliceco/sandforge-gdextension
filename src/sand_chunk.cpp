@@ -100,28 +100,25 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	int dst_idx = get_index(dst_x, dst_y);
 	Particle &dst_p = grid[dst_idx];
 
-	// Empty space - can always move there
-	if (dst_p.mat_id == 0)
-		goto perform_swap;
-
-	// Check if destination material is passable
-	if (dst_p.mat_id < (int)mat_registry.size()) {
-		const MaterialConfig &dst_config = mat_registry[dst_p.mat_id];
-		if (dst_config.state == MatterState::SOLID_FIXED)
-			return false;  // Solid fixed blocks cannot be displaced
-		
-		// Can displace if destination is lighter
-		if (src_config.density > dst_config.density)
-			goto perform_swap;
-	}
-	return false;
-
-perform_swap:
+	if (dst_p.mat_id == 0) {
 		Particle temp = grid[src_idx];
+		grid[src_idx] = dst_p;
+		grid[dst_idx] = temp;
+		grid[dst_idx].flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
+		return true;
+	}
 
-		grid[src_idx] = dst_p; // Swap destination item back to source
-		grid[dst_idx] = temp; // Place moving item into destination
+	if (dst_p.mat_id >= (int)mat_registry.size())
+		return false;
 
+	const MaterialConfig &dst_config = mat_registry[dst_p.mat_id];
+	if (dst_config.state == MatterState::SOLID_FIXED)
+		return false;
+
+	if (src_config.density > dst_config.density) {
+		Particle temp = grid[src_idx];
+		grid[src_idx] = dst_p;
+		grid[dst_idx] = temp;
 		grid[dst_idx].flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
 		return true;
 	}
@@ -136,12 +133,10 @@ void SandSimulationChunk::check_neighborhood_reactions(int x, int y) {
 
 	const MaterialConfig &config = mat_registry[p.mat_id];
 
-	// Check for acid reactions
 	if (config.acid_reactive > 0) {
 		check_acid_reactions(x, y);
 	}
 
-	// Check for fire spreading
 	if (config.flammability > 0) {
 		check_fire_reactions(x, y);
 	}
@@ -149,29 +144,26 @@ void SandSimulationChunk::check_neighborhood_reactions(int x, int y) {
 
 void SandSimulationChunk::check_acid_reactions(int x, int y) {
 	Particle &p = grid[get_index(x, y)];
-	
-	// Check all 8 neighbors for acid (ID 4, configurable)
+	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
+		return;
+
+	const MaterialConfig &config = mat_registry[p.mat_id];
 	const int ACID_MAT_ID = 4;
 	
 	for (int dx = -1; dx <= 1; ++dx) {
 		for (int dy = -1; dy <= 1; ++dy) {
 			if (dx == 0 && dy == 0)
-				continue;  // Skip self
-			
+				continue;
+
 			int nx = x + dx;
 			int ny = y + dy;
-			
 			if (!in_bounds(nx, ny))
 				continue;
-			
+
 			Particle &neighbor = grid[get_index(nx, ny)];
-			if (neighbor.mat_id == ACID_MAT_ID) {
-				// Acid dissolves this particle with some probability
-				// Probability based on acid_reactive value (0-255)
-				if ((rand() % 256) < p.acid_reactive) {
-					p.mat_id = 0;  // Dissolve
-					return;
-				}
+			if (neighbor.mat_id == ACID_MAT_ID && (rand() % 256) < config.acid_reactive) {
+				p.mat_id = 0;
+				return;
 			}
 		}
 	}
@@ -179,29 +171,27 @@ void SandSimulationChunk::check_acid_reactions(int x, int y) {
 
 void SandSimulationChunk::check_fire_reactions(int x, int y) {
 	Particle &p = grid[get_index(x, y)];
-	
-	// Check for nearby fire (ID 5, configurable)
+	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
+		return;
+
+	const MaterialConfig &config = mat_registry[p.mat_id];
 	const int FIRE_MAT_ID = 5;
 	
 	for (int dx = -1; dx <= 1; ++dx) {
 		for (int dy = -1; dy <= 1; ++dy) {
 			if (dx == 0 && dy == 0)
 				continue;
-			
+
 			int nx = x + dx;
 			int ny = y + dy;
-			
 			if (!in_bounds(nx, ny))
 				continue;
-			
+
 			Particle &neighbor = grid[get_index(nx, ny)];
-			if (neighbor.mat_id == FIRE_MAT_ID) {
-				// This particle catches fire with probability based on flammability
-				if ((rand() % 256) < p.flammability) {
-					p.mat_id = FIRE_MAT_ID;
-					p.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
-					return;
-				}
+			if (neighbor.mat_id == FIRE_MAT_ID && (rand() % 256) < config.flammability) {
+				p.mat_id = FIRE_MAT_ID;
+				p.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
+				return;
 			}
 		}
 	}

@@ -6,6 +6,8 @@
 
 void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SandWorld::clear);
+	ClassDB::bind_method(D_METHOD("save_snapshot"), &SandWorld::save_snapshot);
+	ClassDB::bind_method(D_METHOD("load_snapshot", "snapshot"), &SandWorld::load_snapshot);
 	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "flammability", "acid_reactive"), 
 		&SandWorld::add_material);
 	ClassDB::bind_method(D_METHOD("set_materials_from_dict", "materials"), &SandWorld::set_materials_from_dict);
@@ -67,6 +69,14 @@ void SandWorld::clear() {
 	world_grid.clear();
 }
 
+PackedByteArray SandWorld::save_snapshot() const {
+	return world_grid.serialize();
+}
+
+bool SandWorld::load_snapshot(const PackedByteArray &snapshot) {
+	return world_grid.deserialize(snapshot);
+}
+
 void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive) {
 	auto &registry = SandSimulationChunk::mat_registry;
 	
@@ -91,10 +101,11 @@ void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
 		Variant key = materials_dict.keys()[i];
 		Variant value = materials_dict[key];
 		
-		if (!key.is_num())
+		Variant::Type key_type = key.get_type();
+		if (key_type != Variant::INT && key_type != Variant::FLOAT)
 			continue;
 		
-		int mat_id = (int)key;
+		int mat_id = (int)(double)key;
 		if (value.get_type() != Variant::DICTIONARY)
 			continue;
 		
