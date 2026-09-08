@@ -148,7 +148,7 @@ PackedByteArray SandWorld::render_to_texture(Vector2i texture_size, Vector2i wor
 			int world_y = world_offset.y + y;
 			
 			Particle p = world_grid.get_particle_readonly(world_x, world_y);
-			Color color(0, 0, 0, 0);  // Default transparent black
+			Color color(0, 0, 0, 1);  // Default opaque black
 			
 			if (p.mat_id > 0 && p.mat_id < (int)registry.size()) {
 				color = registry[p.mat_id].color;

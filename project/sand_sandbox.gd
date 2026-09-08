@@ -31,20 +31,18 @@ func _process(_delta: float) -> void:
 	_update_status()
 
 
-func _unhandled_input(event: InputEvent) -> void:
+func _on_canvas_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed and canvas.get_global_rect().has_point(event.position):
+		if event.pressed:
 			drawing = true
-			previous_world_position = _to_world_position(event.position)
+			previous_world_position = _to_world_position(canvas.get_local_mouse_position())
 			_draw_to(previous_world_position)
-			get_viewport().set_input_as_handled()
 		elif not event.pressed:
 			drawing = false
 	elif event is InputEventMouseMotion and drawing:
-		var world_position := _to_world_position(event.position)
+		var world_position := _to_world_position(canvas.get_local_mouse_position())
 		_draw_line(previous_world_position, world_position)
 		previous_world_position = world_position
-		get_viewport().set_input_as_handled()
 
 
 func _configure_materials() -> void:
@@ -61,12 +59,23 @@ func _build_interface() -> void:
 	layout.add_theme_constant_override("separation", 16)
 	add_child(layout)
 
+	var canvas_container := Control.new()
+	canvas_container.custom_minimum_size = Vector2(WORLD_SIZE * DISPLAY_SCALE)
+	layout.add_child(canvas_container)
+
+	var canvas_background := ColorRect.new()
+	canvas_background.color = Color("20242b")
+	canvas_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	canvas_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	canvas_container.add_child(canvas_background)
+
 	canvas = TextureRect.new()
-	canvas.custom_minimum_size = Vector2(WORLD_SIZE * DISPLAY_SCALE)
 	canvas.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	canvas.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layout.add_child(canvas)
+	canvas.mouse_filter = Control.MOUSE_FILTER_STOP
+	canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	canvas.gui_input.connect(_on_canvas_input)
+	canvas_container.add_child(canvas)
 
 	var controls := VBoxContainer.new()
 	controls.custom_minimum_size = Vector2(230, 0)
@@ -81,12 +90,12 @@ func _build_interface() -> void:
 	var palette := GridContainer.new()
 	palette.columns = 2
 	controls.add_child(palette)
-	for material in [
+	for mat in [
 		["Stone", 1], ["Sand", 2], ["Water", 3], ["Acid", 4], ["Fire", 5], ["Erase", 0],
 	]:
 		var button := Button.new()
-		button.text = material[0]
-		button.pressed.connect(_select_material.bind(material[1]))
+		button.text = mat[0]
+		button.pressed.connect(_select_material.bind(mat[1]))
 		palette.add_child(button)
 
 	var brush_label := Label.new()
@@ -141,13 +150,12 @@ func _refresh_canvas() -> void:
 	texture.update(image)
 
 
-func _to_world_position(screen_position: Vector2) -> Vector2i:
-	var relative := screen_position - canvas.get_global_rect().position
-	return Vector2i(relative / DISPLAY_SCALE).clamp(Vector2i.ZERO, WORLD_SIZE - Vector2i.ONE)
+func _to_world_position(canvas_position: Vector2) -> Vector2i:
+	return Vector2i(canvas_position / DISPLAY_SCALE).clamp(Vector2i.ZERO, WORLD_SIZE - Vector2i.ONE)
 
 
-func _draw_to(position: Vector2i) -> void:
-	world.brush_circle(position, int(brush_slider.value), selected_material)
+func _draw_to(pos: Vector2i) -> void:
+	world.brush_circle(pos, int(brush_slider.value), selected_material)
 	_refresh_canvas()
 
 
