@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <functional>
+#include <memory>
 
 #include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
@@ -72,6 +73,6 @@ public:
 	}
 
 private:
-	std::unordered_map<Vector2i, SandSimulationChunk> chunks;
+	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;
 	bool alternate_direction = false;
 };

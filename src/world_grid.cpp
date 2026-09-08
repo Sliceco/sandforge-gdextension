@@ -25,16 +25,16 @@ SandSimulationChunk *WorldGrid::get_or_create_chunk(int chunk_x, int chunk_y) {
 	Vector2i key(chunk_x, chunk_y);
 	auto it = chunks.find(key);
 	if (it != chunks.end()) {
-		return &it->second;
+		return it->second.get();
 	}
-	return &chunks.emplace(key, SandSimulationChunk()).first->second;
+	return chunks.emplace(key, std::make_unique<SandSimulationChunk>()).first->second.get();
 }
 
 SandSimulationChunk *WorldGrid::get_chunk(int chunk_x, int chunk_y) const {
 	Vector2i key(chunk_x, chunk_y);
 	auto it = chunks.find(key);
 	if (it != chunks.end()) {
-		return const_cast<SandSimulationChunk *>(&it->second);
+		return it->second.get();
 	}
 	return nullptr;
 }
@@ -71,9 +71,18 @@ void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
 }
 
 void WorldGrid::tick() {
-	// Update all chunks and remove inactive ones (optional optimization)
-	for (auto &[key, chunk] : chunks) {
-		chunk.tick(alternate_direction);
+	std::vector<Vector2i> chunk_positions;
+	chunk_positions.reserve(chunks.size());
+	for (const auto &[position, _] : chunks) {
+		chunk_positions.push_back(position);
+	}
+
+	// New destination chunks are deferred to the following tick.
+	for (const Vector2i &position : chunk_positions) {
+		SandSimulationChunk *chunk = get_chunk(position.x, position.y);
+		if (chunk != nullptr) {
+			chunk->tick(alternate_direction, *this, position * SandSimulationChunk::SIZE);
+		}
 	}
 	alternate_direction = !alternate_direction;
 	
@@ -97,7 +106,7 @@ PackedByteArray WorldGrid::serialize() const {
 	for (const auto &[position, chunk] : chunks) {
 		append_u32(data, static_cast<uint32_t>(position.x));
 		append_u32(data, static_cast<uint32_t>(position.y));
-		for (const Particle &particle : chunk.grid) {
+		for (const Particle &particle : chunk->grid) {
 			data.append(particle.mat_id);
 			data.append(particle.flags);
 		}
@@ -125,22 +134,22 @@ bool WorldGrid::deserialize(const PackedByteArray &data) {
 		return false;
 	}
 
-	std::unordered_map<Vector2i, SandSimulationChunk> restored_chunks;
+	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> restored_chunks;
 	int offset = SNAPSHOT_HEADER_SIZE;
 	for (uint32_t i = 0; i < chunk_count; ++i) {
 		const int chunk_x = static_cast<int32_t>(read_u32(data, offset));
 		offset += 4;
 		const int chunk_y = static_cast<int32_t>(read_u32(data, offset));
 		offset += 4;
-		SandSimulationChunk chunk;
+		auto chunk = std::make_unique<SandSimulationChunk>();
 		bool has_particles = false;
-		for (Particle &particle : chunk.grid) {
+		for (Particle &particle : chunk->grid) {
 			particle.mat_id = data[offset++];
 			particle.flags = data[offset++];
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {
-			const auto [_, inserted] = restored_chunks.emplace(Vector2i(chunk_x, chunk_y), chunk);
+			const auto [_, inserted] = restored_chunks.emplace(Vector2i(chunk_x, chunk_y), std::move(chunk));
 			if (!inserted) {
 				return false;
 			}

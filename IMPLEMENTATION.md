@@ -149,8 +149,7 @@ func _draw():
 
 ### ⚠️ Known Limitations
 
-- **Chunk Boundaries**: Particles cannot cross chunk boundaries. They accumulate at edges until the next frame allows spreading within-chunk.
-  - Workaround: Larger chunk size or post-processing boundary transfer
+- **Chunk Boundaries**: Particles move and react across chunk boundaries. Chunks created as movement destinations begin updating on the following simulation tick.
   
 - **Material IDs**: Acid (ID 4) and Fire (ID 5) are hardcoded
   - Future enhancement: Make reaction types data-driven
