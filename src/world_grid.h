@@ -40,7 +40,10 @@ public:
 		local_y = world_y & 63;
 	}
 	
-	// Get a particle at world coordinates, creating chunks as needed
+	// Get a particle at world coordinates, creating chunks as needed.
+	// NOTE: mutating the returned reference bypasses dirty-rect tracking;
+	// prefer set_particle() so the change (and any affected neighbor
+	// chunk) is correctly marked for re-simulation.
 	Particle &get_particle(int world_x, int world_y);
 	
 	// Get a particle at world coordinates, returns empty particle if chunk doesn't exist
@@ -71,6 +74,18 @@ public:
 	static void set_material_registry(const std::vector<MaterialConfig> &registry) {
 		SandSimulationChunk::mat_registry = registry;
 	}
+
+	// Per-chunk debug snapshot: chunk coordinates plus its current
+	// dirty rect (in local chunk-space cells). Used by debug overlays to
+	// visualize chunk boundaries and pending simulation regions.
+	struct ChunkDebugInfo {
+		Vector2i chunk_position;
+		bool has_dirty_rect = false;
+		int dirty_min_x = 0, dirty_min_y = 0, dirty_max_x = 0, dirty_max_y = 0;
+	};
+
+	// Snapshot of every allocated chunk's position and dirty rect, for debug visualization.
+	std::vector<ChunkDebugInfo> get_debug_chunk_info() const;
 
 private:
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;

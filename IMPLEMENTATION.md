@@ -23,10 +23,10 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 3. **SandSimulationChunk** (`sand_chunk.h/cpp`)
    - 64×64 grid (4096 particles per chunk)
    - Flat 1D array layout for cache efficiency
-   - Two-phase tick system:
+   - Two-phase tick system, scoped to the chunk's dirty rect:
      - **Phase 1**: Movement (bottom-to-top, alternating scan direction)
      - **Phase 2**: Chemical reactions (neighborhood checking)
-   - Activity tracking with `is_active` flag
+   - Activity tracking via a `dirty_rect` bounding box instead of a whole-chunk flag: any cell write calls `mark_dirty()`, which pads the changed cell by 1 in each direction and grows the rect. A tick only clears flags/scans/reacts within that rect, then resets it so subsequent writes accumulate the region needed for the *next* tick. An empty rect means the chunk is asleep and its tick is skipped.
 
 4. **WorldGrid** (`world_grid.h/cpp`)
    - Sparse chunk management using `unordered_map<Vector2i, SandSimulationChunk>`
@@ -73,7 +73,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 
 ### Optimization
 
-- **Sleep States**: Chunks become inactive (`is_active = false`) if no particles move for a frame
+- **Dirty Rect Tracking**: Each chunk only simulates the bounding box of cells changed since its last tick (padded by 1 cell); the rect is emptied and re-accumulated every tick, so a chunk with no writes near it goes fully idle
 - **Alternating Scan**: Prevents directional pooling bias
 - **Sparse Grid**: Only active regions consume memory
 

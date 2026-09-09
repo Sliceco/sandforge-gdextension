@@ -2,6 +2,7 @@
 
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
+#include "godot_cpp/variant/rect2i.hpp"
 #include "godot_cpp/variant/string.hpp"
 
 void SandWorld::_bind_methods() {
@@ -20,6 +21,7 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("render_to_texture", "texture_size", "world_offset"), &SandWorld::render_to_texture);
 	ClassDB::bind_method(D_METHOD("tick"), &SandWorld::tick);
 	ClassDB::bind_method(D_METHOD("get_chunk_count"), &SandWorld::get_chunk_count);
+	ClassDB::bind_method(D_METHOD("get_debug_chunk_info"), &SandWorld::get_debug_chunk_info);
 }
 
 SandWorld::SandWorld() {
@@ -171,6 +173,29 @@ void SandWorld::tick() {
 
 int SandWorld::get_chunk_count() const {
 	return world_grid.get_chunk_count();
+}
+
+TypedArray<Dictionary> SandWorld::get_debug_chunk_info() const {
+	TypedArray<Dictionary> result;
+	constexpr int SIZE = SandSimulationChunk::SIZE;
+
+	for (const WorldGrid::ChunkDebugInfo &info : world_grid.get_debug_chunk_info()) {
+		Dictionary entry;
+		entry["chunk_position"] = info.chunk_position;
+		entry["world_rect"] = Rect2i(info.chunk_position * SIZE, Vector2i(SIZE, SIZE));
+
+		Rect2i dirty_rect; // Defaults to a zero-sized rect when the chunk is asleep.
+		if (info.has_dirty_rect) {
+			Vector2i origin = info.chunk_position * SIZE + Vector2i(info.dirty_min_x, info.dirty_min_y);
+			Vector2i size = Vector2i(info.dirty_max_x - info.dirty_min_x + 1, info.dirty_max_y - info.dirty_min_y + 1);
+			dirty_rect = Rect2i(origin, size);
+		}
+		entry["dirty_rect"] = dirty_rect;
+
+		result.push_back(entry);
+	}
+
+	return result;
 }
 
 void SandWorld::brush_line(Vector2i from, Vector2i to, int mat_id, int radius) {

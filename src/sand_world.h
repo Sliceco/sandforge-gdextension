@@ -5,6 +5,8 @@
 #include "godot_cpp/variant/color.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
 #include "godot_cpp/variant/packed_byte_array.hpp"
+#include "godot_cpp/variant/typed_array.hpp"
+#include "godot_cpp/variant/dictionary.hpp"
 
 #include "world_grid.h"
 
@@ -47,6 +49,14 @@ public:
 	
 	// Debug/Info
 	int get_chunk_count() const;
+
+	// Returns one Dictionary per allocated chunk with keys:
+	// "chunk_position" (Vector2i), "world_rect" (Rect2i, chunk bounds in
+	// world coordinates), and "dirty_rect" (Rect2i, world-space bounds of
+	// cells pending simulation next tick; zero-sized if the chunk is
+	// asleep). Intended for debug overlays visualizing chunk/dirty-rect
+	// state, not for gameplay logic.
+	TypedArray<Dictionary> get_debug_chunk_info() const;
 
 private:
 	WorldGrid world_grid;

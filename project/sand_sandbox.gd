@@ -6,12 +6,15 @@ const SNAPSHOT_PATH := "user://sandworld_snapshot.bin"
 
 var world := SandWorld.new()
 var canvas: TextureRect
+var debug_overlay: Control
 var status_label: Label
 var pause_button: Button
 var brush_slider: HSlider
+var debug_checkbox: CheckButton
 var selected_material := 2
 var paused := false
 var drawing := false
+var show_debug_overlay := false
 var previous_world_position := Vector2i.ZERO
 var image: Image
 var texture: ImageTexture
@@ -28,6 +31,8 @@ func _process(_delta: float) -> void:
 	if not paused:
 		world.tick()
 	_refresh_canvas()
+	if show_debug_overlay:
+		debug_overlay.queue_redraw()
 	_update_status()
 
 
@@ -76,6 +81,12 @@ func _build_interface() -> void:
 	canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	canvas.gui_input.connect(_on_canvas_input)
 	canvas_container.add_child(canvas)
+
+	debug_overlay = Control.new()
+	debug_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	debug_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	debug_overlay.draw.connect(_draw_debug_overlay)
+	canvas_container.add_child(debug_overlay)
 
 	var controls := VBoxContainer.new()
 	controls.custom_minimum_size = Vector2(230, 0)
@@ -133,6 +144,11 @@ func _build_interface() -> void:
 	load_button.pressed.connect(_load_snapshot)
 	controls.add_child(load_button)
 
+	debug_checkbox = CheckButton.new()
+	debug_checkbox.text = "Show chunks / dirty rects"
+	debug_checkbox.toggled.connect(_on_debug_overlay_toggled)
+	controls.add_child(debug_checkbox)
+
 	status_label = Label.new()
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	controls.add_child(status_label)
@@ -150,8 +166,49 @@ func _refresh_canvas() -> void:
 	texture.update(image)
 
 
+func _on_debug_overlay_toggled(pressed: bool) -> void:
+	show_debug_overlay = pressed
+	debug_overlay.queue_redraw()
+
+
+func _draw_debug_overlay() -> void:
+	if not show_debug_overlay:
+		return
+	const CHUNK_COLOR := Color(1, 1, 1, 0.35)
+	const DIRTY_COLOR := Color(1, 0.2, 0.2, 0.85)
+	var display_rect := _get_canvas_display_rect()
+	var scale := display_rect.size / Vector2(WORLD_SIZE)
+	for entry: Dictionary in world.get_debug_chunk_info():
+		var world_rect: Rect2i = entry["world_rect"]
+		var screen_rect := Rect2(display_rect.position + Vector2(world_rect.position) * scale, Vector2(world_rect.size) * scale)
+		debug_overlay.draw_rect(screen_rect, CHUNK_COLOR, false, 1.0)
+
+		var dirty_rect: Rect2i = entry["dirty_rect"]
+		if dirty_rect.size.x > 0 and dirty_rect.size.y > 0:
+			var dirty_screen_rect := Rect2(display_rect.position + Vector2(dirty_rect.position) * scale, Vector2(dirty_rect.size) * scale)
+			debug_overlay.draw_rect(dirty_screen_rect, DIRTY_COLOR, false, 2.0)
+
+
 func _to_world_position(canvas_position: Vector2) -> Vector2i:
-	return Vector2i(canvas_position / DISPLAY_SCALE).clamp(Vector2i.ZERO, WORLD_SIZE - Vector2i.ONE)
+	var display_rect := _get_canvas_display_rect()
+	var local := (canvas_position - display_rect.position) / display_rect.size * Vector2(WORLD_SIZE)
+	return Vector2i(local).clamp(Vector2i.ZERO, WORLD_SIZE - Vector2i.ONE)
+
+
+# STRETCH_KEEP_ASPECT_CENTERED letterboxes/centers the texture inside
+# `canvas` whenever the control's actual size doesn't exactly match
+# WORLD_SIZE * DISPLAY_SCALE (e.g. after a window resize). Mouse-to-world
+# conversion and the debug overlay must both account for this offset and
+# scale, rather than assuming canvas's origin/size map 1:1 to the texture.
+func _get_canvas_display_rect() -> Rect2:
+	var canvas_size := canvas.size
+	var texture_size := Vector2(WORLD_SIZE)
+	if canvas_size.x <= 0.0 or canvas_size.y <= 0.0:
+		return Rect2(Vector2.ZERO, texture_size * DISPLAY_SCALE)
+	var scale: float = min(canvas_size.x / texture_size.x, canvas_size.y / texture_size.y)
+	var display_size := texture_size * scale
+	var offset := (canvas_size - display_size) * 0.5
+	return Rect2(offset, display_size)
 
 
 func _draw_to(pos: Vector2i) -> void:

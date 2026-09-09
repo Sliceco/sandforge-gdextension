@@ -84,6 +84,15 @@
 				Return the number of active chunks in the world.
 			</description>
 		</method>
+		<method name="get_debug_chunk_info" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Return one Dictionary per allocated chunk, for debug visualization. Each entry has:
+				- "chunk_position" (Vector2i): the chunk's coordinates.
+				- "world_rect" (Rect2i): the chunk's 64x64 bounds in world (pixel) coordinates.
+				- "dirty_rect" (Rect2i): world-space bounds of the cells pending simulation next tick. Zero-sized if the chunk is currently asleep.
+			</description>
+		</method>
 		<method name="get_particle_mat_id" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="pos" type="Vector2i" />

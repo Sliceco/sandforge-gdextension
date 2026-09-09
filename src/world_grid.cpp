@@ -19,6 +19,17 @@ uint32_t read_u32(const PackedByteArray &data, int offset) {
 	}
 	return value;
 }
+
+// Maps a local coordinate across a chunk boundary to the mirrored coordinate
+// in the neighboring chunk (e.g. the rightmost column mirrors to column 0 of
+// the chunk to the right).
+int mirror_coordinate(int local, int delta, int size) {
+	if (delta == -1)
+		return size - 1;
+	if (delta == 1)
+		return 0;
+	return local;
+}
 } // namespace
 
 SandSimulationChunk *WorldGrid::get_or_create_chunk(int chunk_x, int chunk_y) {
@@ -67,7 +78,30 @@ void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
 	
 	SandSimulationChunk *chunk = get_or_create_chunk(chunk_x, chunk_y);
 	chunk->grid[chunk->get_index(local_x, local_y)] = p;
-	chunk->is_active = true;
+	chunk->mark_dirty(local_x, local_y);
+
+	// An edit on a chunk edge can enable movement in a neighboring chunk
+	// (e.g. clearing space so a sleeping chunk above can now fall into it).
+	// Mark the mirrored border cell dirty on any existing neighbor that
+	// shares this cell's boundary, so it re-evaluates just that region on
+	// the next tick instead of staying asleep indefinitely.
+	constexpr int SIZE = SandSimulationChunk::SIZE;
+	const int dy_start = (local_y == 0) ? -1 : 0;
+	const int dy_end = (local_y == SIZE - 1) ? 1 : 0;
+	const int dx_start = (local_x == 0) ? -1 : 0;
+	const int dx_end = (local_x == SIZE - 1) ? 1 : 0;
+	for (int dy = dy_start; dy <= dy_end; ++dy) {
+		for (int dx = dx_start; dx <= dx_end; ++dx) {
+			if (dx == 0 && dy == 0)
+				continue;
+			SandSimulationChunk *neighbor = get_chunk(chunk_x + dx, chunk_y + dy);
+			if (neighbor == nullptr)
+				continue;
+			const int mirrored_x = mirror_coordinate(local_x, dx, SIZE);
+			const int mirrored_y = mirror_coordinate(local_y, dy, SIZE);
+			neighbor->mark_dirty(mirrored_x, mirrored_y);
+		}
+	}
 }
 
 void WorldGrid::tick() {
@@ -93,6 +127,24 @@ void WorldGrid::tick() {
 void WorldGrid::clear() {
 	chunks.clear();
 	alternate_direction = false;
+}
+
+std::vector<WorldGrid::ChunkDebugInfo> WorldGrid::get_debug_chunk_info() const {
+	std::vector<ChunkDebugInfo> info;
+	info.reserve(chunks.size());
+	for (const auto &[position, chunk] : chunks) {
+		ChunkDebugInfo entry;
+		entry.chunk_position = position;
+		entry.has_dirty_rect = !chunk->dirty_rect.empty();
+		if (entry.has_dirty_rect) {
+			entry.dirty_min_x = chunk->dirty_rect.min_x;
+			entry.dirty_min_y = chunk->dirty_rect.min_y;
+			entry.dirty_max_x = chunk->dirty_rect.max_x;
+			entry.dirty_max_y = chunk->dirty_rect.max_y;
+		}
+		info.push_back(entry);
+	}
+	return info;
 }
 
 PackedByteArray WorldGrid::serialize() const {

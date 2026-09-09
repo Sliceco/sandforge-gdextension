@@ -13,39 +13,41 @@ using namespace godot;
 std::vector<MaterialConfig> SandSimulationChunk::mat_registry;
 
 void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, Vector2i world_origin) {
-	if (!is_active)
+	if (dirty_rect.empty())
 		return;
 
-	bool active_this_frame = false;
-	// Clear update flags from the previous frame
-	for (int i = 0; i < SIZE * SIZE; ++i) {
-		grid[i].flags &= ParticleFlags::PARTICLE_FLAG_NONE; // Clear the updated flag
+	// Snapshot the region to simulate this tick, then reset dirty_rect so it
+	// can accumulate whatever region needs simulating on the next tick.
+	DirtyRect active_rect = dirty_rect;
+	dirty_rect.clear();
+
+	// Clear update flags from the previous frame, only within the active region.
+	for (int y = active_rect.min_y; y <= active_rect.max_y; ++y) {
+		for (int x = active_rect.min_x; x <= active_rect.max_x; ++x) {
+			grid[get_index(x, y)].flags &= ParticleFlags::PARTICLE_FLAG_NONE; // Clear the updated flag
+		}
 	}
 
 	// Phase 1: Movement pass - bottom-to-top to let items fall naturally
-	for (int y = SIZE - 1; y >= 0; --y) {
+	for (int y = active_rect.max_y; y >= active_rect.min_y; --y) {
 		// Alternate horizontal scan direction to prevent bias asymmetry
 		if (alternate_direction) {
-			for (int x = 0; x < SIZE; ++x) {
-				if (update_particle(x, y, world_grid, world_origin))
-					active_this_frame = true;
+			for (int x = active_rect.min_x; x <= active_rect.max_x; ++x) {
+				update_particle(x, y, world_grid, world_origin);
 			}
 		} else {
-			for (int x = SIZE - 1; x >= 0; --x) {
-				if (update_particle(x, y, world_grid, world_origin))
-					active_this_frame = true;
+			for (int x = active_rect.max_x; x >= active_rect.min_x; --x) {
+				update_particle(x, y, world_grid, world_origin);
 			}
 		}
 	}
 
 	// Phase 2: Reaction pass - check for chemical interactions
-	for (int y = 0; y < SIZE; ++y) {
-		for (int x = 0; x < SIZE; ++x) {
+	for (int y = active_rect.min_y; y <= active_rect.max_y; ++y) {
+		for (int x = active_rect.min_x; x <= active_rect.max_x; ++x) {
 			check_neighborhood_reactions(x, y, world_grid, world_origin);
 		}
 	}
-
-	is_active = active_this_frame;
 }
 
 bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
@@ -124,7 +126,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	return false;
 }
 
-void SandSimulationChunk::check_neighborhood_reactions(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) {
+void SandSimulationChunk::check_neighborhood_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	Particle &p = grid[get_index(x, y)];
 	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
 		return;  // Empty or invalid particle, skip
@@ -140,7 +142,7 @@ void SandSimulationChunk::check_neighborhood_reactions(int x, int y, const World
 	}
 }
 
-void SandSimulationChunk::check_acid_reactions(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) {
+void SandSimulationChunk::check_acid_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	Particle &p = grid[get_index(x, y)];
 	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
 		return;
@@ -155,14 +157,16 @@ void SandSimulationChunk::check_acid_reactions(int x, int y, const WorldGrid &wo
 
 			Particle neighbor = world_grid.get_particle_readonly(world_origin.x + x + dx, world_origin.y + y + dy);
 			if (neighbor.mat_id == ACID_MAT_ID && (rand() % 256) < config.acid_reactive) {
-				p.mat_id = 0;
+				// Route through world_grid so the vacated cell (and any
+				// neighboring chunk sharing this border) gets marked dirty.
+				world_grid.set_particle(world_origin.x + x, world_origin.y + y, Particle());
 				return;
 			}
 		}
 	}
 }
 
-void SandSimulationChunk::check_fire_reactions(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) {
+void SandSimulationChunk::check_fire_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	Particle &p = grid[get_index(x, y)];
 	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
 		return;
@@ -177,8 +181,12 @@ void SandSimulationChunk::check_fire_reactions(int x, int y, const WorldGrid &wo
 
 			Particle neighbor = world_grid.get_particle_readonly(world_origin.x + x + dx, world_origin.y + y + dy);
 			if (neighbor.mat_id == FIRE_MAT_ID && (rand() % 256) < config.flammability) {
-				p.mat_id = FIRE_MAT_ID;
-				p.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
+				Particle ignited = p;
+				ignited.mat_id = FIRE_MAT_ID;
+				ignited.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
+				// Route through world_grid so this cell (and any neighboring
+				// chunk sharing this border) gets marked dirty.
+				world_grid.set_particle(world_origin.x + x, world_origin.y + y, ignited);
 				return;
 			}
 		}
