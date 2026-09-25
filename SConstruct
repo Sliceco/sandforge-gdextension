@@ -5,7 +5,7 @@ import sys
 from methods import print_error
 
 
-libname = "EXTENSION-NAME"
+libname = "SandForge"
 projectdir = "project"
 
 localEnv = Environment(tools=["default"], PLATFORM="")
@@ -59,6 +59,21 @@ library = env.SharedLibrary(
 )
 
 copy = env.Install("{}/bin/{}/".format(projectdir, env["platform"]), library)
+
+test_program = env.Program(
+    "build/tests/world_grid_tests",
+    source=[
+        "tests/world_grid_tests.cpp",
+        "src/sand_chunk.cpp",
+        "src/world_grid.cpp",
+    ],
+)
+test_result = env.Command(
+    "build/tests/world_grid_tests.passed",
+    test_program,
+    "$SOURCE && touch $TARGET",
+)
+env.Alias("test", test_result)
 
 default_args = [library, copy]
 Default(*default_args)

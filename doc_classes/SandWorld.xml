@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SandWorld" inherits="RefCounted" version="4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		High-performance cellular automata sandbox simulation engine using sparse chunk grid.
+	</brief_description>
+	<description>
+		SandWorld is a GDExtension providing a falling sand simulation engine optimized for Godot 4.x. It uses:
+		- Flat memory layout with 64x64 pixel chunks
+		- Dynamic data-driven material configurations
+		- Sparse chunked world grid for large landscapes
+		- Direct texture rendering via PackedByteArray
+		Features SOLID_POWDER and LIQUID physics, chemical reactions (acid, fire), and interactive brushes.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_material">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="name" type="String" />
+			<param index="2" name="state" type="int" />
+			<param index="3" name="color" type="Color" />
+			<param index="4" name="density" type="int" />
+			<param index="5" name="dispersion" type="int" />
+			<param index="6" name="flammability" type="int" />
+			<param index="7" name="acid_reactive" type="int" />
+			<param index="8" name="decay_chance" type="int" default="0" />
+			<param index="9" name="decay_into" type="int" default="0" />
+			<description>
+				Register a material type with the simulation. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
+				Density determines sinking/floating for SOLID_POWDER/LIQUID (higher sinks); for GAS it inverts, so lower density rises past denser gas/fluid. Dispersion affects liquid/gas horizontal spread. Flammability and acid_reactive use 0-255 probability. decay_chance is the 0-255 per-tick probability this material converts into decay_into (e.g. Fire decaying into Smoke); 0 disables decay.
+			</description>
+		</method>
+		<method name="brush_circle">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="radius" type="int" />
+			<param index="2" name="mat_id" type="int" />
+			<description>
+				Fill a circular area with particles of the specified material.
+			</description>
+		</method>
+		<method name="brush_line">
+			<return type="void" />
+			<param index="0" name="from" type="Vector2i" />
+			<param index="1" name="to" type="Vector2i" />
+			<param index="2" name="mat_id" type="int" />
+			<param index="3" name="radius" type="int" />
+			<description>
+				Draw a line of particles with circular brush from point to point using Bresenham's algorithm.
+			</description>
+		</method>
+		<method name="brush_rectangle">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="size" type="Vector2i" />
+			<param index="2" name="mat_id" type="int" />
+			<description>
+				Fill a rectangular area with particles of the specified material.
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Clear all particles from the simulation.
+			</description>
+		</method>
+		<method name="load_snapshot">
+			<return type="bool" />
+			<param index="0" name="snapshot" type="PackedByteArray" />
+			<description>
+				Replace the world with a snapshot created by [method save_snapshot]. Returns [code]false[/code] when the data has an invalid or unsupported format; the existing world is left unchanged.
+			</description>
+		</method>
+		<method name="explosion">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="radius" type="int" />
+			<description>
+				Clear particles in a circular area (destruction effect).
+			</description>
+		</method>
+		<method name="get_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Return the number of active chunks in the world.
+			</description>
+		</method>
+		<method name="get_debug_chunk_info" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Return one Dictionary per allocated chunk, for debug visualization. Each entry has:
+				- "chunk_position" (Vector2i): the chunk's coordinates.
+				- "world_rect" (Rect2i): the chunk's 64x64 bounds in world (pixel) coordinates.
+				- "dirty_rect" (Rect2i): world-space bounds of the cells pending simulation next tick. Zero-sized if the chunk is currently asleep.
+			</description>
+		</method>
+		<method name="get_particle_mat_id" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="pos" type="Vector2i" />
+			<description>
+				Get the material ID of the particle at the given position, or 0 if empty.
+			</description>
+		</method>
+		<method name="render_to_texture">
+			<return type="PackedByteArray" />
+			<param index="0" name="texture_size" type="Vector2i" />
+			<param index="1" name="world_offset" type="Vector2i" />
+			<description>
+				Render simulation to RGBA8888 PackedByteArray. Can be used with Image.set_data() or ImageTexture.update().
+			</description>
+		</method>
+		<method name="set_materials_from_dict">
+			<return type="void" />
+			<param index="0" name="materials" type="Dictionary" />
+			<description>
+				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, flammability, acid_reactive, decay_chance, decay_into.
+			</description>
+		</method>
+		<method name="save_snapshot" qualifiers="const">
+			<return type="PackedByteArray" />
+			<description>
+				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and particle material IDs and flags, but not material definitions.
+			</description>
+		</method>
+		<method name="set_particle">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="mat_id" type="int" />
+			<description>
+				Place a particle of the specified material at the given position.
+			</description>
+		</method>
+		<method name="tick">
+			<return type="void" />
+			<description>
+				Advance simulation by one frame. Call this in _process() or _physics_process() for continuous simulation.
+			</description>
+		</method>
+	</methods>
+	<constants>
+		<constant name="MATTERSTATE_EMPTY" value="0" type="int">
+			Empty/air particle.
+		</constant>
+		<constant name="MATTERSTATE_SOLID_FIXED" value="1" type="int">
+			Fixed solid (stone, brick) - does not move.
+		</constant>
+		<constant name="MATTERSTATE_SOLID_POWDER" value="2" type="int">
+			Powder (sand, gunpowder) - falls and spreads.
+		</constant>
+		<constant name="MATTERSTATE_LIQUID" value="3" type="int">
+			Liquid (water, oil, acid) - flows downward and sideways.
+		</constant>
+		<constant name="MATTERSTATE_GAS" value="4" type="int">
+			Gas (smoke, steam, fire) - rises and disperses.
+		</constant>
+	</constants>
+</class>
