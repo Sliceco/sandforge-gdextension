@@ -1,5 +1,7 @@
 #include "world_grid.h"
 
+#include <algorithm>
+
 namespace {
 constexpr uint8_t SNAPSHOT_MAGIC[] = { 'S', 'F', 'W', '1' };
 constexpr uint32_t SNAPSHOT_VERSION = 1;
@@ -104,12 +106,52 @@ void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
 	}
 }
 
+void WorldGrid::mark_particle_updated(int world_x, int world_y) {
+	updated_particles.emplace_back(world_x, world_y);
+}
+
+void WorldGrid::clear_updated_particles() {
+	for (const Vector2i &position : updated_particles) {
+		int chunk_x, chunk_y, local_x, local_y;
+		world_to_chunk(position.x, position.y, chunk_x, chunk_y);
+		world_to_local(position.x, position.y, local_x, local_y);
+
+		SandSimulationChunk *chunk = get_chunk(chunk_x, chunk_y);
+		if (chunk != nullptr) {
+			Particle &particle = chunk->grid[chunk->get_index(local_x, local_y)];
+			particle.flags &= ~ParticleFlags::PARTICLE_FLAG_UPDATED;
+		}
+	}
+	updated_particles.clear();
+}
+
 void WorldGrid::tick() {
+	clear_updated_particles();
+
 	std::vector<Vector2i> chunk_positions;
 	chunk_positions.reserve(chunks.size());
 	for (const auto &[position, _] : chunks) {
 		chunk_positions.push_back(position);
 	}
+
+	// Process chunks in a deterministic, gravity-consistent order instead of
+	// relying on unordered_map's hash-bucket iteration order. Without this,
+	// whether a chunk is ticked before or after its neighbor across a chunk
+	// boundary is arbitrary and can flip depending on hashing, so material
+	// falling across that seam intermittently gets an extra same-frame step
+	// in one chunk but not the other. That produces a stable per-seam bias
+	// (a staggered, comb-like surface right at chunk edges) instead of the
+	// smooth multi-chunk cascade seen within a single chunk's own bottom-to-
+	// top scan. Sorting bottom row of chunks first (largest chunk_y first),
+	// with horizontal order matching the same alternate_direction used for
+	// the intra-chunk column scan, lets a falling column clear space in the
+	// chunk below before the chunk above is simulated, so cross-chunk falls
+	// cascade within one tick just like they do inside a single chunk.
+	std::sort(chunk_positions.begin(), chunk_positions.end(), [this](const Vector2i &a, const Vector2i &b) {
+		if (a.y != b.y)
+			return a.y > b.y;
+		return alternate_direction ? a.x < b.x : a.x > b.x;
+	});
 
 	// New destination chunks are deferred to the following tick.
 	for (const Vector2i &position : chunk_positions) {
@@ -126,6 +168,7 @@ void WorldGrid::tick() {
 
 void WorldGrid::clear() {
 	chunks.clear();
+	updated_particles.clear();
 	alternate_direction = false;
 }
 
@@ -198,6 +241,7 @@ bool WorldGrid::deserialize(const PackedByteArray &data) {
 		for (Particle &particle : chunk->grid) {
 			particle.mat_id = data[offset++];
 			particle.flags = data[offset++];
+			particle.flags &= ~ParticleFlags::PARTICLE_FLAG_UPDATED;
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {
@@ -209,6 +253,7 @@ bool WorldGrid::deserialize(const PackedByteArray &data) {
 	}
 
 	chunks = std::move(restored_chunks);
+	updated_particles.clear();
 	alternate_direction = false;
 	return true;
 }

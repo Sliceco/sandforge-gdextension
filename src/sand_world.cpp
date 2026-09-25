@@ -9,8 +9,8 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SandWorld::clear);
 	ClassDB::bind_method(D_METHOD("save_snapshot"), &SandWorld::save_snapshot);
 	ClassDB::bind_method(D_METHOD("load_snapshot", "snapshot"), &SandWorld::load_snapshot);
-	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "flammability", "acid_reactive"), 
-		&SandWorld::add_material);
+	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "flammability", "acid_reactive", "decay_chance", "decay_into"),
+		&SandWorld::add_material, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("set_materials_from_dict", "materials"), &SandWorld::set_materials_from_dict);
 	ClassDB::bind_method(D_METHOD("set_particle", "pos", "mat_id"), &SandWorld::set_particle);
 	ClassDB::bind_method(D_METHOD("get_particle_mat_id", "pos"), &SandWorld::get_particle_mat_id);
@@ -79,7 +79,7 @@ bool SandWorld::load_snapshot(const PackedByteArray &snapshot) {
 	return world_grid.deserialize(snapshot);
 }
 
-void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive) {
+void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive, int decay_chance, int decay_into) {
 	auto &registry = SandSimulationChunk::mat_registry;
 	
 	// Ensure registry is large enough
@@ -94,7 +94,9 @@ void SandWorld::add_material(int id, const String &name, int state, Color color,
 		.density = (uint8_t)density,
 		.dispersion = (uint8_t)dispersion,
 		.flammability = (uint8_t)flammability,
-		.acid_reactive = (uint8_t)acid_reactive
+		.acid_reactive = (uint8_t)acid_reactive,
+		.decay_chance = (uint8_t)decay_chance,
+		.decay_into = (uint8_t)decay_into
 	};
 }
 
@@ -119,8 +121,10 @@ void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
 		int dispersion = mat_dict.get("dispersion", 0);
 		int flammability = mat_dict.get("flammability", 0);
 		int acid_reactive = mat_dict.get("acid_reactive", 0);
+		int decay_chance = mat_dict.get("decay_chance", 0);
+		int decay_into = mat_dict.get("decay_into", 0);
 		
-		add_material(mat_id, "", state, color, density, dispersion, flammability, acid_reactive);
+		add_material(mat_id, "", state, color, density, dispersion, flammability, acid_reactive, decay_chance, decay_into);
 	}
 }
 

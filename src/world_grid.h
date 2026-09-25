@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
@@ -51,6 +52,10 @@ public:
 	
 	// Set a particle at world coordinates, creating chunks as needed
 	void set_particle(int world_x, int world_y, const Particle &p);
+
+	// Records a particle that moved this tick so its transient update flag can
+	// be cleared before the next tick without scanning an entire chunk.
+	void mark_particle_updated(int world_x, int world_y);
 	
 	// Update all active chunks
 	void tick();
@@ -88,6 +93,9 @@ public:
 	std::vector<ChunkDebugInfo> get_debug_chunk_info() const;
 
 private:
+	void clear_updated_particles();
+
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;
+	std::vector<Vector2i> updated_particles;
 	bool alternate_direction = false;
 };

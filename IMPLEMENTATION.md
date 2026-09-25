@@ -26,7 +26,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
    - Two-phase tick system, scoped to the chunk's dirty rect:
      - **Phase 1**: Movement (bottom-to-top, alternating scan direction)
      - **Phase 2**: Chemical reactions (neighborhood checking)
-   - Activity tracking via a `dirty_rect` bounding box instead of a whole-chunk flag: any cell write calls `mark_dirty()`, which pads the changed cell by 1 in each direction and grows the rect. A tick only clears flags/scans/reacts within that rect, then resets it so subsequent writes accumulate the region needed for the *next* tick. An empty rect means the chunk is asleep and its tick is skipped.
+   - Activity tracking via a `dirty_rect` bounding box instead of a whole-chunk flag: any cell write calls `mark_dirty()`, which pads the changed cell by 1 in each direction and grows the rect. A tick only scans/reacts within that rect, then resets it so subsequent writes accumulate the region needed for the *next* tick. An empty rect means the chunk is asleep and its tick is skipped.
 
 4. **WorldGrid** (`world_grid.h/cpp`)
    - Sparse chunk management using `unordered_map<Vector2i, SandSimulationChunk>`
@@ -58,6 +58,12 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 **SOLID_FIXED** (stone, brick):
 - No movement
 
+**GAS** (smoke, fire, steam):
+1. Try moving up (mirrors powder/liquid falling, but rises)
+2. Try diagonal up-left/up-right
+3. Horizontal dispersion (left/right up to `dispersion` distance)
+4. Density comparisons are inverted vs. SOLID_POWDER/LIQUID: lower density rises past a denser gas/fluid above it
+
 ### Chemical Reactions
 
 **Acid Corrosion**:
@@ -71,9 +77,13 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 - Fire material ID: 5 (configurable via materials)
 - Sets `PARTICLE_FLAG_BURNING` flag
 
+**Decay**:
+- Particles with `decay_chance > 0` have a per-tick probability of converting into `decay_into`
+- Used so Fire burns out into Smoke instead of burning forever
+
 ### Optimization
 
-- **Dirty Rect Tracking**: Each chunk only simulates the bounding box of cells changed since its last tick (padded by 1 cell); the rect is emptied and re-accumulated every tick, so a chunk with no writes near it goes fully idle
+- **Dirty Rect Tracking**: Each chunk only simulates the bounding box of cells changed since its last tick (padded by 1 cell); the rect is emptied and re-accumulated every tick, so a chunk with no writes near it goes fully idle. The world tracks moved particles directly, clearing their transient update flags before the next tick without scanning or changing unrelated dirty regions.
 - **Alternating Scan**: Prevents directional pooling bias
 - **Sparse Grid**: Only active regions consume memory
 
@@ -154,9 +164,6 @@ func _draw():
 - **Material IDs**: Acid (ID 4) and Fire (ID 5) are hardcoded
   - Future enhancement: Make reaction types data-driven
 
-- **No GAS Physics**: GAS state is declared but not implemented
-  - Requires upward movement and buoyancy logic
-
 ## Building
 
 ### Requirements
@@ -210,8 +217,7 @@ Typical performance:
 
 1. Multi-threaded chunk updates
 2. Cross-boundary particle movement
-3. GAS physics implementation
-4. Neighbor chunk synchronization
-5. Particle merging/stacking for optimization
-6. Custom reaction pipelines
-7. GPU-accelerated rendering
+3. Neighbor chunk synchronization
+4. Particle merging/stacking for optimization
+5. Custom reaction pipelines
+6. GPU-accelerated rendering

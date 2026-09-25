@@ -21,6 +21,8 @@ struct MaterialConfig {
     std::uint8_t dispersion = 0;    // How far liquids flow horizontally per frame
     std::uint8_t flammability = 0;  // Chance to catch fire
     std::uint8_t acid_reactive = 0; // Does it dissolve when touching acid?
+    std::uint8_t decay_chance = 0;  // Chance per tick to convert into decay_into (e.g. Fire -> Smoke)
+    std::uint8_t decay_into = 0;    // Material ID produced when this material decays
 };
 
 } // namespace godot

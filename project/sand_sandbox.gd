@@ -55,7 +55,8 @@ func _configure_materials() -> void:
 	world.add_material(2, "Sand", 2, Color("e6d899"), 50, 0, 120, 120)
 	world.add_material(3, "Water", 3, Color("3366cc"), 30, 4, 0, 0)
 	world.add_material(4, "Acid", 3, Color("78d83d"), 45, 3, 0, 0)
-	world.add_material(5, "Fire", 4, Color("ff6b21"), 1, 0, 0, 0)
+	world.add_material(5, "Fire", 4, Color("ff6b21"), 1, 0, 0, 0, 40, 6)
+	world.add_material(6, "Smoke", 4, Color("888888aa"), 1, 3, 0, 0, 3, 0)
 
 
 func _build_interface() -> void:
@@ -102,7 +103,7 @@ func _build_interface() -> void:
 	palette.columns = 2
 	controls.add_child(palette)
 	for mat in [
-		["Stone", 1], ["Sand", 2], ["Water", 3], ["Acid", 4], ["Fire", 5], ["Erase", 0],
+		["Stone", 1], ["Sand", 2], ["Water", 3], ["Acid", 4], ["Fire", 5], ["Smoke", 6], ["Erase", 0],
 	]:
 		var button := Button.new()
 		button.text = mat[0]
@@ -177,15 +178,15 @@ func _draw_debug_overlay() -> void:
 	const CHUNK_COLOR := Color(1, 1, 1, 0.35)
 	const DIRTY_COLOR := Color(1, 0.2, 0.2, 0.85)
 	var display_rect := _get_canvas_display_rect()
-	var scale := display_rect.size / Vector2(WORLD_SIZE)
+	var display_scale := display_rect.size / Vector2(WORLD_SIZE)
 	for entry: Dictionary in world.get_debug_chunk_info():
 		var world_rect: Rect2i = entry["world_rect"]
-		var screen_rect := Rect2(display_rect.position + Vector2(world_rect.position) * scale, Vector2(world_rect.size) * scale)
+		var screen_rect := Rect2(display_rect.position + Vector2(world_rect.position) * display_scale, Vector2(world_rect.size) * display_scale)
 		debug_overlay.draw_rect(screen_rect, CHUNK_COLOR, false, 1.0)
 
 		var dirty_rect: Rect2i = entry["dirty_rect"]
 		if dirty_rect.size.x > 0 and dirty_rect.size.y > 0:
-			var dirty_screen_rect := Rect2(display_rect.position + Vector2(dirty_rect.position) * scale, Vector2(dirty_rect.size) * scale)
+			var dirty_screen_rect := Rect2(display_rect.position + Vector2(dirty_rect.position) * display_scale, Vector2(dirty_rect.size) * display_scale)
 			debug_overlay.draw_rect(dirty_screen_rect, DIRTY_COLOR, false, 2.0)
 
 
@@ -205,8 +206,8 @@ func _get_canvas_display_rect() -> Rect2:
 	var texture_size := Vector2(WORLD_SIZE)
 	if canvas_size.x <= 0.0 or canvas_size.y <= 0.0:
 		return Rect2(Vector2.ZERO, texture_size * DISPLAY_SCALE)
-	var scale: float = min(canvas_size.x / texture_size.x, canvas_size.y / texture_size.y)
-	var display_size := texture_size * scale
+	var display_scale: float = min(canvas_size.x / texture_size.x, canvas_size.y / texture_size.y)
+	var display_size := texture_size * display_scale
 	var offset := (canvas_size - display_size) * 0.5
 	return Rect2(offset, display_size)
 
@@ -269,7 +270,7 @@ func _load_snapshot() -> void:
 
 
 func _update_status(message := "") -> void:
-	var material_names := ["Eraser", "Stone", "Sand", "Water", "Acid", "Fire"]
+	var material_names := ["Eraser", "Stone", "Sand", "Water", "Acid", "Fire", "Smoke"]
 	var status := "Material: %s\nRadius: %d\nChunks: %d\nSimulation: %s" % [
 		material_names[selected_material],
 		int(brush_slider.value) if brush_slider else 4,

@@ -24,9 +24,11 @@
 			<param index="5" name="dispersion" type="int" />
 			<param index="6" name="flammability" type="int" />
 			<param index="7" name="acid_reactive" type="int" />
+			<param index="8" name="decay_chance" type="int" default="0" />
+			<param index="9" name="decay_into" type="int" default="0" />
 			<description>
 				Register a material type with the simulation. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
-				Density determines sinking/floating (higher sinks). Dispersion affects liquid spread. Flammability and acid_reactive use 0-255 probability.
+				Density determines sinking/floating for SOLID_POWDER/LIQUID (higher sinks); for GAS it inverts, so lower density rises past denser gas/fluid. Dispersion affects liquid/gas horizontal spread. Flammability and acid_reactive use 0-255 probability. decay_chance is the 0-255 per-tick probability this material converts into decay_into (e.g. Fire decaying into Smoke); 0 disables decay.
 			</description>
 		</method>
 		<method name="brush_circle">
@@ -112,7 +114,7 @@
 			<return type="void" />
 			<param index="0" name="materials" type="Dictionary" />
 			<description>
-				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, flammability, acid_reactive.
+				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, flammability, acid_reactive, decay_chance, decay_into.
 			</description>
 		</method>
 		<method name="save_snapshot" qualifiers="const">

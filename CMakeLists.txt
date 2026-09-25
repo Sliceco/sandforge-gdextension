@@ -94,3 +94,16 @@ set(GODOT_PROJECT_BINARY_DIR "${PROJECT_SOURCE_DIR}/${GODOT_PROJECT_DIR}/bin/${G
 add_custom_command(TARGET ${LIBNAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:${LIBNAME}>" "${GODOT_PROJECT_BINARY_DIR}/$<TARGET_FILE_NAME:${LIBNAME}>"
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(sandforge-world-grid-tests
+        tests/world_grid_tests.cpp
+        src/sand_chunk.cpp
+        src/world_grid.cpp
+    )
+    target_include_directories(sandforge-world-grid-tests PRIVATE src)
+    target_link_libraries(sandforge-world-grid-tests PRIVATE godot-cpp)
+    set_property(TARGET sandforge-world-grid-tests PROPERTY CXX_STANDARD 17)
+    add_test(NAME sandforge-world-grid-tests COMMAND sandforge-world-grid-tests)
+endif()

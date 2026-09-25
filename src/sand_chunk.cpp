@@ -21,13 +21,6 @@ void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, 
 	DirtyRect active_rect = dirty_rect;
 	dirty_rect.clear();
 
-	// Clear update flags from the previous frame, only within the active region.
-	for (int y = active_rect.min_y; y <= active_rect.max_y; ++y) {
-		for (int x = active_rect.min_x; x <= active_rect.max_x; ++x) {
-			grid[get_index(x, y)].flags &= ParticleFlags::PARTICLE_FLAG_NONE; // Clear the updated flag
-		}
-	}
-
 	// Phase 1: Movement pass - bottom-to-top to let items fall naturally
 	for (int y = active_rect.max_y; y >= active_rect.min_y; --y) {
 		// Alternate horizontal scan direction to prevent bias asymmetry
@@ -54,9 +47,17 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 	int idx = get_index(x, y);
 	Particle &p = grid[idx];
 
-	// If the particle is empty or has been updated this frame, skip it
-	if (p.mat_id == 0 || (p.flags & ParticleFlags::PARTICLE_FLAG_UPDATED))
+	// If the particle is empty, skip it.
+	if (p.mat_id == 0)
 		return false;
+
+	// A particle that crossed into this chunk may be encountered after its
+	// source chunk already moved it this frame. Keep it dirty so it resumes on
+	// the next tick after WorldGrid clears the transient update flag.
+	if (p.flags & ParticleFlags::PARTICLE_FLAG_UPDATED) {
+		mark_dirty(x, y);
+		return false;
+	}
 
 	// Bounds check on material registry
 	if (p.mat_id >= (int)mat_registry.size())
@@ -92,10 +93,31 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 		}
 	}
 
+	// Gases (Smoke, Fire, etc.) behave like liquids but rise instead of
+	// fall, so movement mirrors the powder/liquid logic with an inverted
+	// density rule (lighter gas displaces denser gas/fluid above it).
+	if (config.state == MatterState::GAS) {
+		if (try_move_or_swap(x, y, x, y - 1, config, world_grid, world_origin, true))
+			return true;
+
+		int side_dir = (rand() % 2 == 0) ? 1 : -1;
+		if (try_move_or_swap(x, y, x + side_dir, y - 1, config, world_grid, world_origin, true))
+			return true;
+		if (try_move_or_swap(x, y, x - side_dir, y - 1, config, world_grid, world_origin, true))
+			return true;
+
+		for (int i = 1; i <= config.dispersion; ++i) {
+			if (try_move_or_swap(x, y, x + (side_dir * i), y, config, world_grid, world_origin, true))
+				return true;
+			if (try_move_or_swap(x, y, x - (side_dir * i), y, config, world_grid, world_origin, true))
+				return true;
+		}
+	}
+
 	return false;
 }
 
-bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin) {
+bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
 	const Vector2i source_position = world_origin + Vector2i(src_x, src_y);
 	const Vector2i destination_position = world_origin + Vector2i(dst_x, dst_y);
 	Particle destination = world_grid.get_particle_readonly(destination_position.x, destination_position.y);
@@ -105,6 +127,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		destination.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
 		world_grid.set_particle(source_position.x, source_position.y, Particle());
 		world_grid.set_particle(destination_position.x, destination_position.y, destination);
+		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
 		return true;
 	}
 
@@ -115,11 +138,15 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	if (dst_config.state == MatterState::SOLID_FIXED)
 		return false;
 
-	if (src_config.density > dst_config.density) {
+	// Normally the denser material sinks past the lighter one. Rising
+	// gases invert this so the lighter gas floats past whatever is above.
+	bool src_wins = invert_density ? (src_config.density < dst_config.density) : (src_config.density > dst_config.density);
+	if (src_wins) {
 		Particle source = grid[get_index(src_x, src_y)];
 		source.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
 		world_grid.set_particle(source_position.x, source_position.y, destination);
 		world_grid.set_particle(destination_position.x, destination_position.y, source);
+		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
 		return true;
 	}
 
@@ -139,6 +166,10 @@ void SandSimulationChunk::check_neighborhood_reactions(int x, int y, WorldGrid &
 
 	if (config.flammability > 0) {
 		check_fire_reactions(x, y, world_grid, world_origin);
+	}
+
+	if (config.decay_chance > 0) {
+		check_decay_reactions(x, y, world_grid, world_origin);
 	}
 }
 
@@ -191,4 +222,21 @@ void SandSimulationChunk::check_fire_reactions(int x, int y, WorldGrid &world_gr
 			}
 		}
 	}
+}
+
+void SandSimulationChunk::check_decay_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	Particle &p = grid[get_index(x, y)];
+	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
+		return;
+
+	const MaterialConfig &config = mat_registry[p.mat_id];
+	if (config.decay_chance == 0 || (rand() % 256) >= config.decay_chance)
+		return;
+
+	// Burnt-out fire (and similar decaying materials) turns into its
+	// configured byproduct, e.g. Fire -> Smoke. Route through world_grid so
+	// the cell (and any neighboring chunk sharing this border) wakes up.
+	Particle decayed;
+	decayed.mat_id = config.decay_into;
+	world_grid.set_particle(world_origin.x + x, world_origin.y + y, decayed);
 }

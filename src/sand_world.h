@@ -28,7 +28,7 @@ public:
 	bool load_snapshot(const PackedByteArray &snapshot);
 	
 	// Material configuration
-	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive);
+	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive, int decay_chance = 0, int decay_into = 0);
 	void set_materials_from_dict(const Dictionary &materials_dict);
 	
 	// Particle operations

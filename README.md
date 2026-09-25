@@ -29,6 +29,12 @@ Now, you can build the project with the following command:
 scons
 ```
 
+Run the native world-grid regressions with:
+
+```shell
+scons test
+```
+
 If the build command worked, you can test it with the [project](./project) project. Import it into Godot, open it, and launch the main scene. You should see it print the following line in the console:
 
 ```
