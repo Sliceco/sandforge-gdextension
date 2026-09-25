@@ -19,6 +19,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
      - `dispersion`: Horizontal flow distance for liquids
      - `flammability`: Fire spread probability
      - `acid_reactive`: Dissolution probability
+     - `decay_chance` / `decay_into`: Per-tick probability of converting into another material (e.g. Fire decaying into Smoke)
 
 3. **SandSimulationChunk** (`sand_chunk.h/cpp`)
    - 64×64 grid (4096 particles per chunk)
@@ -182,6 +183,9 @@ git submodule update --init
 scons
 
 # Output: bin/linux/libSandForge.so (or platform-specific)
+
+# Run native regression tests
+scons test
 ```
 
 ### IDE Setup
@@ -216,8 +220,7 @@ Typical performance:
 ## Future Enhancements
 
 1. Multi-threaded chunk updates
-2. Cross-boundary particle movement
-3. Neighbor chunk synchronization
-4. Particle merging/stacking for optimization
-5. Custom reaction pipelines
-6. GPU-accelerated rendering
+2. Neighbor chunk synchronization
+3. Particle merging/stacking for optimization
+4. Custom reaction pipelines
+5. GPU-accelerated rendering

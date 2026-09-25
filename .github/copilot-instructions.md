@@ -23,7 +23,11 @@
   ```sh
   scons compiledb=yes compile_commands.json
   ```
-- There is currently no repository-level automated test runner or individual test command. Exercise the extension through the Godot sample project at `project/project.godot`; run its main scene after building.
+- Run native `WorldGrid` boundary regressions with:
+  ```sh
+  scons test
+  ```
+  This builds and executes `tests/world_grid_tests.cpp` against the simulation sources directly. Exercise the full extension through the Godot sample project at `project/project.godot`; run its main scene (`sand_sandbox.tscn`) after building.
 - CI does not currently run formatting, but `.clang-format` is the C++ style source of truth. Check one changed C++ file with:
   ```sh
   clang-format --dry-run --Werror src/sand_world.cpp

@@ -5,9 +5,9 @@
 #include <random>
 #include <vector>
 
+#include "godot_cpp/variant/vector2i.hpp"
 #include "materialconfig.h"
 #include "particle.h"
-#include "godot_cpp/variant/vector2i.hpp"
 
 using namespace godot;
 
@@ -75,7 +75,7 @@ private:
 	// invert_density flips the "denser wins" swap rule so buoyant gases can
 	// rise past heavier fluids instead of sinking past lighter ones.
 	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false);
-	
+
 	// Chemical reaction methods
 	void check_acid_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	void check_fire_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);

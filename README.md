@@ -1,49 +1,70 @@
 # SandForge GDExtension
-A high-performance cellular automata engine for Godot written in C++ via GDExtension. Build massive sand, fluid, and physics-based grid simulations with native speed.
 
-## Contents
-* Preconfigured source files for C++ development of the GDExtension ([src/](./src/))
-* An empty Godot project in [project/](./project), to test the GDExtension
-* godot-cpp as a submodule (`godot-cpp/`)
-* GitHub Issues template ([.github/ISSUE_TEMPLATE.yml](./.github/ISSUE_TEMPLATE.yml))
-* GitHub CI/CD workflows to publish your library packages when creating a release ([.github/workflows/builds.yml](./.github/workflows/builds.yml))
-* An SConstruct file with various functions, such as boilerplate for [Adding documentation](https://docs.godotengine.org/en/stable/tutorials/scripting/cpp/gdextension_docs_system.html)
+A high-performance cellular automata engine for Godot 4.x written in C++ via GDExtension. Build massive sand, fluid, gas, and reaction-based grid simulations with native speed.
 
-## Usage - Template
+## Features
 
-To use this template, log in to GitHub and click the green "Use this template" button at the top of the repository page. This will let you create a copy of this repository with a clean git history.
+* Sparse chunked world grid (`WorldGrid`) so simulation cost scales with active particle count, not world size
+* Cache-friendly 64x64 `SandSimulationChunk` grids with dirty-rect tracking, so idle chunks are skipped entirely
+* Data-driven materials (`SandWorld.add_material`) covering `SOLID_FIXED`, `SOLID_POWDER`, `LIQUID`, and `GAS` matter states
+* Density-based sinking/floating for powders and liquids, and buoyant rising for gases (e.g. smoke)
+* Chemical reactions: acid corrosion, fire spreading, and material decay (e.g. Fire burning out into Smoke)
+* Brush tools (line, circle, rectangle) and explosion/destruction helpers
+* Direct RGBA8888 texture rendering for fast display via `Image`/`ImageTexture`
+* World snapshot save/load (`save_snapshot` / `load_snapshot`)
 
-To get started with your new GDExtension, do the following:
+See [IMPLEMENTATION.md](./IMPLEMENTATION.md) for a deeper look at the simulation architecture, and [doc_classes/SandWorld.xml](./doc_classes/SandWorld.xml) for the full GDScript API reference (also browsable in the Godot editor's built-in docs after building).
 
-* clone your repository to your local computer
-* initialize the godot-cpp git submodule via `git submodule update --init`
-* change the name of the compiled library file inside the [SConstruct](./SConstruct) file by modifying the `libname` string.
-  * change the paths of the to be loaded library name inside the [project/bin/example.gdextension](./project/bin/example.gdextension) file, by replacing `SandForge` with the name you chose for `libname`.
-* change the `entry_symbol` string inside [project/bin/example.gdextension](./project/bin/example.gdextension) file.
-  * rename the `example_library_init` function in [src/register_types.cpp](./src/register_types.cpp) to the same name you chose for `entry_symbol`.
-* change the name of the `project/bin/example.gdextension` file
+## Repository contents
 
-Now, you can build the project with the following command:
+* C++ source for the GDExtension ([src/](./src/))
+* A sample Godot project with an interactive sandbox scene ([project/](./project)), used to exercise the extension
+* Native regression tests for `WorldGrid` boundary behavior ([tests/](./tests/))
+* `godot-cpp` as a submodule (`godot-cpp/`)
+* GitHub Issue template ([.github/ISSUE_TEMPLATE/](./.github/ISSUE_TEMPLATE/))
+* GitHub CI/CD workflows: [ci.yml](./.github/workflows/ci.yml) (build verification on every push/PR) and [make_build.yml](./.github/workflows/make_build.yml) (manually triggered multi-platform release builds)
+
+## Building
+
+Requirements: a C++17 compiler, Python 3.x, and [SCons](https://scons.org/).
 
 ```shell
+# Initialize the godot-cpp submodule (first time only)
+git submodule update --init --recursive
+
+# Build the extension for your host platform
 scons
 ```
 
-Run the native world-grid regressions with:
+The build compiles the GDExtension and copies the platform library into `project/bin/<platform>/`, where `project/bin/sandforge.gdextension` loads it. To match a specific CI configuration:
+
+```shell
+scons target=template_debug platform=linux arch=x86_64 precision=double
+```
+
+CMake is also supported as an alternative build system:
+
+```shell
+cmake -S . -B build
+cmake --build build
+```
+
+## Testing
+
+Run the native `WorldGrid` boundary regression suite:
 
 ```shell
 scons test
 ```
 
-If the build command worked, you can test it with the [project](./project) project. Import it into Godot, open it, and launch the main scene. You should see it print the following line in the console:
+This builds and executes [tests/world_grid_tests.cpp](./tests/world_grid_tests.cpp) against the simulation sources directly (no Godot runtime required).
 
-```
-Type: 24
-```
+To exercise the extension interactively, open [project/project.godot](./project/project.godot) in Godot 4.1+ after building and run the main scene (`sand_sandbox.tscn`), which provides a paintable sandbox with brushes for every built-in material, pause/step controls, and a chunk/dirty-rect debug overlay.
 
-### Configuring an IDE
-You can develop your own extension with any text editor and by invoking scons on the command line, but if you want to work with an IDE (Integrated Development Environment), you can use a compilation database file called `compile_commands.json`. Most IDEs should automatically identify this file, and self-configure appropriately.
-To generate the database file, you can run one of the following commands in the project root directory:
+## Configuring an IDE
+
+Generate a `compile_commands.json` compilation database so IDEs with C++ tooling (e.g. clangd) can self-configure:
+
 ```shell
 # Generate compile_commands.json while compiling
 scons compiledb=yes
@@ -52,11 +73,18 @@ scons compiledb=yes
 scons compiledb=yes compile_commands.json
 ```
 
-## Usage - Actions
+## Code style
 
-This repository comes with continuous integration (CI) through a GitHub action that tests building the GDExtension.
-It triggers automatically for each pushed change. You can find and edit it in [builds.yml](.github/workflows/ci.yml).
+C++ formatting is enforced by [.clang-format](./.clang-format) (tabs, width 4, LLVM-derived, project headers before system headers). Check a file with:
 
-There is also a workflow ([make_build.yml](.github/workflows/make_build.yml)) that builds the GDExtension for all supported platforms that you can use to create releases.
-You can trigger this workflow manually from the `Actions` tab on GitHub.
-After it is complete, you can find the file `godot-cpp-template.zip` in the `Artifacts` section of the workflow run.
+```shell
+clang-format --dry-run --Werror src/sand_world.cpp
+```
+
+## Contributing
+
+Issues and pull requests are welcome. Please open an issue describing the bug or proposal before submitting large changes, and make sure `scons test` and a full `scons` build both pass before submitting a PR.
+
+## License
+
+This project is released into the public domain under [The Unlicense](./LICENSE.md). See [LICENSE.md](./LICENSE.md) for details. Note that the `godot-cpp` submodule is a separate project distributed under its own (MIT) license.

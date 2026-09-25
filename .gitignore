@@ -6,6 +6,9 @@
 /bin/**
 !project/bin/*.gdextension
 
+# Ignore local build output (SCons `test` target, CMake build dirs, etc.)
+/build/
+
 # Ignore .venv files for python virtual environments
 .venv/
 
@@ -14,6 +17,9 @@
 
 # Ignore custom.py
 custom.py
+
+# Python bytecode cache
+__pycache__/
 
 # Ignore generated compile_commands.json
 compile_commands.json

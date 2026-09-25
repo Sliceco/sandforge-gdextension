@@ -1,8 +1,8 @@
 #pragma once
 
-#include <unordered_map>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "godot_cpp/variant/packed_byte_array.hpp"
@@ -13,68 +13,68 @@ using namespace godot;
 
 // Custom hash function for Vector2i to use with unordered_map
 namespace std {
-template<>
+template <>
 struct hash<Vector2i> {
 	std::size_t operator()(const Vector2i &v) const noexcept {
 		return std::hash<int64_t>()(((int64_t)v.x << 32) | ((uint32_t)v.y));
 	}
 };
-}
+} //namespace std
 
 class WorldGrid {
 public:
 	// Get or create a chunk at the given chunk coordinates
 	SandSimulationChunk *get_or_create_chunk(int chunk_x, int chunk_y);
-	
+
 	// Get a chunk if it exists, otherwise return nullptr
 	SandSimulationChunk *get_chunk(int chunk_x, int chunk_y) const;
-	
+
 	// Convert world pixel coordinates to chunk coordinates
 	static void world_to_chunk(int world_x, int world_y, int &chunk_x, int &chunk_y) {
-		chunk_x = world_x >> 6;  // Divide by 64
+		chunk_x = world_x >> 6; // Divide by 64
 		chunk_y = world_y >> 6;
 	}
-	
+
 	// Convert world pixel coordinates to local chunk coordinates
 	static void world_to_local(int world_x, int world_y, int &local_x, int &local_y) {
-		local_x = world_x & 63;  // Modulo 64
+		local_x = world_x & 63; // Modulo 64
 		local_y = world_y & 63;
 	}
-	
+
 	// Get a particle at world coordinates, creating chunks as needed.
 	// NOTE: mutating the returned reference bypasses dirty-rect tracking;
 	// prefer set_particle() so the change (and any affected neighbor
 	// chunk) is correctly marked for re-simulation.
 	Particle &get_particle(int world_x, int world_y);
-	
+
 	// Get a particle at world coordinates, returns empty particle if chunk doesn't exist
 	Particle get_particle_readonly(int world_x, int world_y) const;
-	
+
 	// Set a particle at world coordinates, creating chunks as needed
 	void set_particle(int world_x, int world_y, const Particle &p);
 
 	// Records a particle that moved this tick so its transient update flag can
 	// be cleared before the next tick without scanning an entire chunk.
 	void mark_particle_updated(int world_x, int world_y);
-	
+
 	// Update all active chunks
 	void tick();
-	
+
 	// Clear all chunks
 	void clear();
 
 	// Serialize and restore allocated chunks without exposing grid internals.
 	PackedByteArray serialize() const;
 	bool deserialize(const PackedByteArray &data);
-	
+
 	// Get the number of active chunks
 	int get_chunk_count() const { return chunks.size(); }
-	
+
 	// Get material registry reference
 	static const std::vector<MaterialConfig> &get_material_registry() {
 		return SandSimulationChunk::mat_registry;
 	}
-	
+
 	// Set material registry
 	static void set_material_registry(const std::vector<MaterialConfig> &registry) {
 		SandSimulationChunk::mat_registry = registry;

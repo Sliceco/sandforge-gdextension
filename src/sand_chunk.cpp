@@ -156,7 +156,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 void SandSimulationChunk::check_neighborhood_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	Particle &p = grid[get_index(x, y)];
 	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
-		return;  // Empty or invalid particle, skip
+		return; // Empty or invalid particle, skip
 
 	const MaterialConfig &config = mat_registry[p.mat_id];
 
@@ -180,7 +180,7 @@ void SandSimulationChunk::check_acid_reactions(int x, int y, WorldGrid &world_gr
 
 	const MaterialConfig &config = mat_registry[p.mat_id];
 	const int ACID_MAT_ID = 4;
-	
+
 	for (int dx = -1; dx <= 1; ++dx) {
 		for (int dy = -1; dy <= 1; ++dy) {
 			if (dx == 0 && dy == 0)
@@ -204,7 +204,7 @@ void SandSimulationChunk::check_fire_reactions(int x, int y, WorldGrid &world_gr
 
 	const MaterialConfig &config = mat_registry[p.mat_id];
 	const int FIRE_MAT_ID = 5;
-	
+
 	for (int dx = -1; dx <= 1; ++dx) {
 		for (int dy = -1; dy <= 1; ++dy) {
 			if (dx == 0 && dy == 0)
