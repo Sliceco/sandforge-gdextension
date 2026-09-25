@@ -42,9 +42,9 @@ get_target_property(GODOTCPP_SUFFIX godot::cpp GODOTCPP_SUFFIX)
 get_target_property(GODOTCPP_PLATFORM godot::cpp GODOTCPP_PLATFORM)
 
 # Now we can specify our own project which will inherit any global cmake properties or variables that have been defined.
-project(godot-cpp-template
-    VERSION 1.0
-    DESCRIPTION "This repository serves as a quickstart template for GDExtension development with Godot 4.0+."
+project(SandForge
+    VERSION 0.1
+    DESCRIPTION "SandForge is a high-performance falling sand simulation engine implemented as a Godot GDExtension. It provides physics-based cellular automata simulation suitable for 2D games."
     HOMEPAGE_URL "https://github.com/enetheru/godot-cpp-template/tree/main"
     LANGUAGES CXX
 )

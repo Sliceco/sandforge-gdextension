@@ -2,7 +2,7 @@
 
 ## Overview
 
-SandForge is a high-performance falling sand simulation engine implemented as a Godot GDExtension. It provides physics-based cellular automata simulation suitable for sandbox games like Noita.
+SandForge is a high-performance falling sand simulation engine implemented as a Godot GDExtension. It provides physics-based cellular automata simulation suitable for 2D games.
 
 ## Architecture
 
