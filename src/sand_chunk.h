@@ -1,13 +1,11 @@
 #pragma once
 
-#include <algorithm>
-#include <climits>
-#include <random>
-#include <vector>
-
 #include "godot_cpp/variant/vector2i.hpp"
 #include "materialconfig.h"
 #include "particle.h"
+
+#include <algorithm>
+#include <climits>
 
 using namespace godot;
 
@@ -51,9 +49,6 @@ public:
 	// tick. Starts fully dirty so a freshly created chunk always runs once.
 	DirtyRect dirty_rect{ 0, 0, SIZE - 1, SIZE - 1 };
 
-	// Array of material configurations indexed by mat_id
-	static std::vector<MaterialConfig> mat_registry;
-
 	inline int get_index(int x, int y) { return y * SIZE + x; }
 	inline bool in_bounds(int x, int y) const { return x >= 0 && x < SIZE && y >= 0 && y < SIZE; }
 
@@ -75,10 +70,13 @@ private:
 	// invert_density flips the "denser wins" swap rule so buoyant gases can
 	// rise past heavier fluids instead of sinking past lighter ones.
 	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false);
+	// Slides horizontally toward dir through empty cells (up to the
+	// material's dispersion) and moves to the farthest one reached; never
+	// passes through an occupied cell.
+	bool try_disperse(int x, int y, int dir, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density);
 
-	// Chemical reaction methods
-	void check_acid_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
-	void check_fire_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
-	void check_decay_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// Reaction pass. Each returns true if it changed the cell.
 	void check_neighborhood_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	bool check_reaction_rules(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	bool check_decay(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 };

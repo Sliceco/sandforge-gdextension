@@ -8,7 +8,7 @@ A high-performance cellular automata engine for Godot 4.x written in C++ via GDE
 * Cache-friendly 64x64 `SandSimulationChunk` grids with dirty-rect tracking, so idle chunks are skipped entirely
 * Data-driven materials (`SandWorld.add_material`) covering `SOLID_FIXED`, `SOLID_POWDER`, `LIQUID`, and `GAS` matter states
 * Density-based sinking/floating for powders and liquids, and buoyant rising for gases (e.g. smoke)
-* Chemical reactions: acid corrosion, fire spreading, and material decay (e.g. Fire burning out into Smoke)
+* Data-driven reactions between any two materials (acid corrosion, fire spreading, water putting out fire, …) plus material decay (e.g. Fire burning out into Smoke)
 * Brush tools (line, circle, rectangle) and explosion/destruction helpers
 * Direct RGBA8888 texture rendering for fast display via `Image`/`ImageTexture`
 * World snapshot save/load (`save_snapshot` / `load_snapshot`)

@@ -28,8 +28,13 @@ public:
 	bool load_snapshot(const PackedByteArray &snapshot);
 
 	// Material configuration
-	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive, int decay_chance = 0, int decay_into = 0);
+	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int decay_chance = 0, int decay_into = 0);
 	void set_materials_from_dict(const Dictionary &materials_dict);
+
+	// Reactions: when `material` touches `other`, with probability
+	// chance/256 per tick they become `material_into` and `other_into`.
+	void add_reaction(int material, int other, int material_into, int other_into, int chance);
+	void clear_reactions();
 
 	// Particle operations
 	void set_particle(Vector2i pos, int mat_id);
@@ -46,6 +51,7 @@ public:
 
 	// Simulation
 	void tick();
+	void set_seed(int64_t seed);
 
 	// Debug/Info
 	int get_chunk_count() const;

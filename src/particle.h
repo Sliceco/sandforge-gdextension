@@ -6,8 +6,10 @@ namespace godot {
 
 enum ParticleFlags : std::uint8_t {
 	PARTICLE_FLAG_NONE = 0,
-	PARTICLE_FLAG_UPDATED = (1 << 0),
-	PARTICLE_FLAG_BURNING = (1 << 1) // Easy to expand later
+	PARTICLE_FLAG_UPDATED = (1 << 0), // Moved this tick
+	PARTICLE_FLAG_REACTED = (1 << 1), // Produced by a reaction this tick
+	// Flags that only live for one tick; WorldGrid clears them before the next.
+	PARTICLE_FLAGS_TRANSIENT = PARTICLE_FLAG_UPDATED | PARTICLE_FLAG_REACTED
 };
 
 struct Particle {

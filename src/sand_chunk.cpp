@@ -1,16 +1,42 @@
-#include <algorithm>
-#include <random>
-#include <vector>
+#include "sand_chunk.h"
 
+#include "material_registry.h"
 #include "materialconfig.h"
 #include "particle.h"
-#include "sand_chunk.h"
+#include "sim_random.h"
 #include "world_grid.h"
+
+#include <algorithm>
+#include <vector>
 
 using namespace godot;
 
-// Initialize static registry
-std::vector<MaterialConfig> SandSimulationChunk::mat_registry;
+namespace {
+// The 8 neighbors in ring order, so starting at a random index and walking
+// the ring visits them without a fixed directional preference.
+constexpr int NEIGHBOR_OFFSETS[8][2] = {
+	{ -1, -1 },
+	{ 0, -1 },
+	{ 1, -1 },
+	{ 1, 0 },
+	{ 1, 1 },
+	{ 0, 1 },
+	{ -1, 1 },
+	{ -1, 0 }
+};
+
+// Returns the particle that replaces `source` when it turns into `into`.
+// Products carry PARTICLE_FLAG_REACTED so they can't react again (and chain
+// across the grid in scan order) within the same tick. UPDATED is kept so a
+// particle that already moved this tick still can't move again.
+Particle reaction_product(Particle source, std::uint8_t into) {
+	if (into == 0)
+		return Particle();
+	source.mat_id = into;
+	source.flags |= ParticleFlags::PARTICLE_FLAG_REACTED;
+	return source;
+}
+} // namespace
 
 void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, Vector2i world_origin) {
 	if (dirty_rect.empty())
@@ -59,14 +85,12 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 		return false;
 	}
 
-	// Bounds check on material registry
-	if (p.mat_id >= (int)mat_registry.size())
-		return false;
-
 	// Get the material configuration for this particle
-	const MaterialConfig &config = mat_registry[p.mat_id];
+	const MaterialConfig &config = world_grid.get_material_registry().get(p.mat_id);
 	if (config.state == MatterState::SOLID_FIXED)
 		return false;
+
+	SimRandom &random = world_grid.get_random();
 
 	// Try moving down (Powders and Liquids)
 	if (config.state == MatterState::SOLID_POWDER || config.state == MatterState::LIQUID) {
@@ -74,7 +98,7 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 			return true;
 
 		// Diagonal fall down-left or down-right
-		int side_dir = (rand() % 2 == 0) ? 1 : -1;
+		int side_dir = random.next_sign();
 		if (try_move_or_swap(x, y, x + side_dir, y + 1, config, world_grid, world_origin))
 			return true;
 		if (try_move_or_swap(x, y, x - side_dir, y + 1, config, world_grid, world_origin))
@@ -83,14 +107,11 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 
 	// Horizontal dispersion (Liquids only)
 	if (config.state == MatterState::LIQUID) {
-		int side_dir = (rand() % 2 == 0) ? 1 : -1;
-		// Check up to dispersion limit
-		for (int i = 1; i <= config.dispersion; ++i) {
-			if (try_move_or_swap(x, y, x + (side_dir * i), y, config, world_grid, world_origin))
-				return true;
-			if (try_move_or_swap(x, y, x - (side_dir * i), y, config, world_grid, world_origin))
-				return true;
-		}
+		int side_dir = random.next_sign();
+		if (try_disperse(x, y, side_dir, config, world_grid, world_origin, false))
+			return true;
+		if (try_disperse(x, y, -side_dir, config, world_grid, world_origin, false))
+			return true;
 	}
 
 	// Gases (Smoke, Fire, etc.) behave like liquids but rise instead of
@@ -100,21 +121,38 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 		if (try_move_or_swap(x, y, x, y - 1, config, world_grid, world_origin, true))
 			return true;
 
-		int side_dir = (rand() % 2 == 0) ? 1 : -1;
+		int side_dir = random.next_sign();
 		if (try_move_or_swap(x, y, x + side_dir, y - 1, config, world_grid, world_origin, true))
 			return true;
 		if (try_move_or_swap(x, y, x - side_dir, y - 1, config, world_grid, world_origin, true))
 			return true;
 
-		for (int i = 1; i <= config.dispersion; ++i) {
-			if (try_move_or_swap(x, y, x + (side_dir * i), y, config, world_grid, world_origin, true))
-				return true;
-			if (try_move_or_swap(x, y, x - (side_dir * i), y, config, world_grid, world_origin, true))
-				return true;
-		}
+		if (try_disperse(x, y, side_dir, config, world_grid, world_origin, true))
+			return true;
+		if (try_disperse(x, y, -side_dir, config, world_grid, world_origin, true))
+			return true;
 	}
 
 	return false;
+}
+
+bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
+	if (config.dispersion == 0)
+		return false;
+
+	// Walk outward while cells are empty, stopping at the first occupied one
+	// so the particle can't jump over walls or other particles.
+	const Vector2i position = world_origin + Vector2i(x, y);
+	int reach = 0;
+	for (int i = 1; i <= config.dispersion; ++i) {
+		if (world_grid.get_particle_readonly(position.x + dir * i, position.y).mat_id != 0)
+			break;
+		reach = i;
+	}
+
+	// With no empty cell to slide into, the adjacent cell may still be
+	// displaced by the usual density rule.
+	return try_move_or_swap(x, y, x + dir * std::max(reach, 1), y, config, world_grid, world_origin, invert_density);
 }
 
 bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
@@ -131,10 +169,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		return true;
 	}
 
-	if (destination.mat_id >= (int)mat_registry.size())
-		return false;
-
-	const MaterialConfig &dst_config = mat_registry[destination.mat_id];
+	const MaterialConfig &dst_config = world_grid.get_material_registry().get(destination.mat_id);
 	if (dst_config.state == MatterState::SOLID_FIXED)
 		return false;
 
@@ -147,6 +182,11 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		world_grid.set_particle(source_position.x, source_position.y, destination);
 		world_grid.set_particle(destination_position.x, destination_position.y, source);
 		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
+		// The displaced particle may already carry transient flags from
+		// earlier this tick; track its new cell too, or they are never
+		// cleared and it stays frozen.
+		if (destination.flags & ParticleFlags::PARTICLE_FLAGS_TRANSIENT)
+			world_grid.mark_particle_updated(source_position.x, source_position.y);
 		return true;
 	}
 
@@ -154,89 +194,78 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 }
 
 void SandSimulationChunk::check_neighborhood_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
-	Particle &p = grid[get_index(x, y)];
-	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
-		return; // Empty or invalid particle, skip
-
-	const MaterialConfig &config = mat_registry[p.mat_id];
-
-	if (config.acid_reactive > 0) {
-		check_acid_reactions(x, y, world_grid, world_origin);
-	}
-
-	if (config.flammability > 0) {
-		check_fire_reactions(x, y, world_grid, world_origin);
-	}
-
-	if (config.decay_chance > 0) {
-		check_decay_reactions(x, y, world_grid, world_origin);
-	}
-}
-
-void SandSimulationChunk::check_acid_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
-	Particle &p = grid[get_index(x, y)];
-	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
+	const Particle &p = grid[get_index(x, y)];
+	// Skip empty cells and products of a reaction earlier this tick.
+	if (p.mat_id == 0 || (p.flags & ParticleFlags::PARTICLE_FLAG_REACTED))
 		return;
 
-	const MaterialConfig &config = mat_registry[p.mat_id];
-	const int ACID_MAT_ID = 4;
+	if (check_reaction_rules(x, y, world_grid, world_origin))
+		return;
+	check_decay(x, y, world_grid, world_origin);
+}
 
-	for (int dx = -1; dx <= 1; ++dx) {
-		for (int dy = -1; dy <= 1; ++dy) {
-			if (dx == 0 && dy == 0)
+bool SandSimulationChunk::check_reaction_rules(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	const Particle self = grid[get_index(x, y)];
+	const std::vector<ReactionRule> &rules = world_grid.get_material_registry().get_reactions(self.mat_id);
+	if (rules.empty())
+		return false;
+
+	SimRandom &random = world_grid.get_random();
+	const Vector2i self_position = world_origin + Vector2i(x, y);
+	const int start = static_cast<int>(random.next_below(8));
+	bool eligible = false;
+
+	for (int i = 0; i < 8; ++i) {
+		const int *offset = NEIGHBOR_OFFSETS[(start + i) % 8];
+		const Vector2i neighbor_position = self_position + Vector2i(offset[0], offset[1]);
+		const Particle neighbor = world_grid.get_particle_readonly(neighbor_position.x, neighbor_position.y);
+		if (neighbor.flags & ParticleFlags::PARTICLE_FLAG_REACTED)
+			continue;
+
+		for (const ReactionRule &rule : rules) {
+			if (rule.other != neighbor.mat_id)
+				continue;
+			eligible = true;
+			if (random.next_u8() >= rule.chance)
 				continue;
 
-			Particle neighbor = world_grid.get_particle_readonly(world_origin.x + x + dx, world_origin.y + y + dy);
-			if (neighbor.mat_id == ACID_MAT_ID && (rand() % 256) < config.acid_reactive) {
-				// Route through world_grid so the vacated cell (and any
-				// neighboring chunk sharing this border) gets marked dirty.
-				world_grid.set_particle(world_origin.x + x, world_origin.y + y, Particle());
-				return;
+			// Route through world_grid so both cells (and any neighboring
+			// chunk sharing a border) get marked dirty.
+			world_grid.set_particle(self_position.x, self_position.y, reaction_product(self, rule.self_into));
+			world_grid.mark_particle_updated(self_position.x, self_position.y);
+			if (rule.other_into != neighbor.mat_id) {
+				world_grid.set_particle(neighbor_position.x, neighbor_position.y, reaction_product(neighbor, rule.other_into));
+				world_grid.mark_particle_updated(neighbor_position.x, neighbor_position.y);
 			}
+			return true;
 		}
 	}
+
+	// A reaction could have happened but lost its roll. Stay dirty so it is
+	// retried next tick instead of stalling once nothing nearby moves.
+	if (eligible)
+		mark_dirty(x, y);
+	return false;
 }
 
-void SandSimulationChunk::check_fire_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
-	Particle &p = grid[get_index(x, y)];
-	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
-		return;
+bool SandSimulationChunk::check_decay(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	const Particle self = grid[get_index(x, y)];
+	const MaterialConfig &config = world_grid.get_material_registry().get(self.mat_id);
+	if (config.decay_chance == 0)
+		return false;
 
-	const MaterialConfig &config = mat_registry[p.mat_id];
-	const int FIRE_MAT_ID = 5;
-
-	for (int dx = -1; dx <= 1; ++dx) {
-		for (int dy = -1; dy <= 1; ++dy) {
-			if (dx == 0 && dy == 0)
-				continue;
-
-			Particle neighbor = world_grid.get_particle_readonly(world_origin.x + x + dx, world_origin.y + y + dy);
-			if (neighbor.mat_id == FIRE_MAT_ID && (rand() % 256) < config.flammability) {
-				Particle ignited = p;
-				ignited.mat_id = FIRE_MAT_ID;
-				ignited.flags |= ParticleFlags::PARTICLE_FLAG_BURNING;
-				// Route through world_grid so this cell (and any neighboring
-				// chunk sharing this border) gets marked dirty.
-				world_grid.set_particle(world_origin.x + x, world_origin.y + y, ignited);
-				return;
-			}
-		}
+	if (world_grid.get_random().next_u8() >= config.decay_chance) {
+		// Keep decaying material (e.g. fire trapped under a ceiling) awake
+		// until it actually decays.
+		mark_dirty(x, y);
+		return false;
 	}
-}
-
-void SandSimulationChunk::check_decay_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
-	Particle &p = grid[get_index(x, y)];
-	if (p.mat_id == 0 || p.mat_id >= (int)mat_registry.size())
-		return;
-
-	const MaterialConfig &config = mat_registry[p.mat_id];
-	if (config.decay_chance == 0 || (rand() % 256) >= config.decay_chance)
-		return;
 
 	// Burnt-out fire (and similar decaying materials) turns into its
 	// configured byproduct, e.g. Fire -> Smoke. Route through world_grid so
 	// the cell (and any neighboring chunk sharing this border) wakes up.
-	Particle decayed;
-	decayed.mat_id = config.decay_into;
-	world_grid.set_particle(world_origin.x + x, world_origin.y + y, decayed);
+	const Vector2i position = world_origin + Vector2i(x, y);
+	world_grid.set_particle(position.x, position.y, reaction_product(self, config.decay_into));
+	world_grid.mark_particle_updated(position.x, position.y);
+	return true;
 }
