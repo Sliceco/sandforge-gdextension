@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.17)
 if(CMAKE_C_COMPILER)
 endif()
 
-set(LIBNAME "EXTENSION-NAME") # "The name of the library"
+set(LIBNAME "SandForge") # "The name of the library"
 set(GODOT_PROJECT_DIR "project" CACHE STRING "The directory of a Godot project folder")
 
 # Make sure all the dependencies are satisfied
@@ -42,9 +42,9 @@ get_target_property(GODOTCPP_SUFFIX godot::cpp GODOTCPP_SUFFIX)
 get_target_property(GODOTCPP_PLATFORM godot::cpp GODOTCPP_PLATFORM)
 
 # Now we can specify our own project which will inherit any global cmake properties or variables that have been defined.
-project(godot-cpp-template
-    VERSION 1.0
-    DESCRIPTION "This repository serves as a quickstart template for GDExtension development with Godot 4.0+."
+project(SandForge
+    VERSION 0.1
+    DESCRIPTION "SandForge is a high-performance falling sand simulation engine implemented as a Godot GDExtension. It provides physics-based cellular automata simulation suitable for 2D games."
     HOMEPAGE_URL "https://github.com/enetheru/godot-cpp-template/tree/main"
     LANGUAGES CXX
 )
@@ -57,6 +57,12 @@ target_sources(${LIBNAME}
     src/register_types.h
     src/example_class.cpp
     src/example_class.h
+    src/sand_chunk.cpp
+    src/sand_chunk.h
+    src/world_grid.cpp
+    src/world_grid.h
+    src/sand_world.cpp
+    src/sand_world.h
 )
 
 # Fetch a list of the xml files to use for documentation and add to our target
@@ -88,3 +94,16 @@ set(GODOT_PROJECT_BINARY_DIR "${PROJECT_SOURCE_DIR}/${GODOT_PROJECT_DIR}/bin/${G
 add_custom_command(TARGET ${LIBNAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:${LIBNAME}>" "${GODOT_PROJECT_BINARY_DIR}/$<TARGET_FILE_NAME:${LIBNAME}>"
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(sandforge-world-grid-tests
+        tests/world_grid_tests.cpp
+        src/sand_chunk.cpp
+        src/world_grid.cpp
+    )
+    target_include_directories(sandforge-world-grid-tests PRIVATE src)
+    target_link_libraries(sandforge-world-grid-tests PRIVATE godot-cpp)
+    set_property(TARGET sandforge-world-grid-tests PROPERTY CXX_STANDARD 17)
+    add_test(NAME sandforge-world-grid-tests COMMAND sandforge-world-grid-tests)
+endif()
