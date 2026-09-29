@@ -66,6 +66,12 @@ public:
 	void tick(bool alternate_direction, WorldGrid &world_grid, Vector2i world_origin);
 
 private:
+	// Local-access fast paths: cells inside this chunk skip the WorldGrid hash
+	// lookup; anything outside falls back to world coordinates. Writes still
+	// go through WorldGrid so dirty/neighbor wake-up rules apply.
+	Particle read_cell(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) const;
+	void write_cell(int x, int y, const Particle &p, WorldGrid &world_grid, Vector2i world_origin);
+
 	bool update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// invert_density flips the "denser wins" swap rule so buoyant gases can
 	// rise past heavier fluids instead of sinking past lighter ones.
