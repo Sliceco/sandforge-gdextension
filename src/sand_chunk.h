@@ -52,6 +52,14 @@ public:
 	inline int get_index(int x, int y) { return y * SIZE + x; }
 	inline bool in_bounds(int x, int y) const { return x >= 0 && x < SIZE && y >= 0 && y < SIZE; }
 
+	bool is_empty() const {
+		for (const Particle &p : grid) {
+			if (p.mat_id != 0)
+				return false;
+		}
+		return true;
+	}
+
 	bool is_active() const { return !dirty_rect.empty(); }
 
 	// Marks a local cell, plus its 3x3 neighborhood, dirty for the next
