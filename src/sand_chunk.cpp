@@ -69,6 +69,21 @@ void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, 
 	}
 }
 
+Particle SandSimulationChunk::read_cell(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) const {
+	if (in_bounds(x, y))
+		return grid[y * SIZE + x];
+	return world_grid.get_particle_readonly(world_origin.x + x, world_origin.y + y);
+}
+
+void SandSimulationChunk::write_cell(int x, int y, const Particle &p, WorldGrid &world_grid, Vector2i world_origin) {
+	if (in_bounds(x, y)) {
+		// world_origin is a multiple of SIZE, so this is this chunk's key.
+		world_grid.set_particle_in_chunk(*this, world_origin.x >> 6, world_origin.y >> 6, x, y, p);
+		return;
+	}
+	world_grid.set_particle(world_origin.x + x, world_origin.y + y, p);
+}
+
 bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	int idx = get_index(x, y);
 	Particle &p = grid[idx];
@@ -142,10 +157,9 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 
 	// Walk outward while cells are empty, stopping at the first occupied one
 	// so the particle can't jump over walls or other particles.
-	const Vector2i position = world_origin + Vector2i(x, y);
 	int reach = 0;
 	for (int i = 1; i <= config.dispersion; ++i) {
-		if (world_grid.get_particle_readonly(position.x + dir * i, position.y).mat_id != 0)
+		if (read_cell(x + dir * i, y, world_grid, world_origin).mat_id != 0)
 			break;
 		reach = i;
 	}
@@ -158,13 +172,13 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
 	const Vector2i source_position = world_origin + Vector2i(src_x, src_y);
 	const Vector2i destination_position = world_origin + Vector2i(dst_x, dst_y);
-	Particle destination = world_grid.get_particle_readonly(destination_position.x, destination_position.y);
+	Particle destination = read_cell(dst_x, dst_y, world_grid, world_origin);
 
 	if (destination.mat_id == 0) {
 		destination = grid[get_index(src_x, src_y)];
 		destination.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
-		world_grid.set_particle(source_position.x, source_position.y, Particle());
-		world_grid.set_particle(destination_position.x, destination_position.y, destination);
+		write_cell(src_x, src_y, Particle(), world_grid, world_origin);
+		write_cell(dst_x, dst_y, destination, world_grid, world_origin);
 		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
 		return true;
 	}
@@ -179,8 +193,8 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	if (src_wins) {
 		Particle source = grid[get_index(src_x, src_y)];
 		source.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
-		world_grid.set_particle(source_position.x, source_position.y, destination);
-		world_grid.set_particle(destination_position.x, destination_position.y, source);
+		write_cell(src_x, src_y, destination, world_grid, world_origin);
+		write_cell(dst_x, dst_y, source, world_grid, world_origin);
 		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
 		// The displaced particle may already carry transient flags from
 		// earlier this tick; track its new cell too, or they are never
@@ -218,7 +232,7 @@ bool SandSimulationChunk::check_reaction_rules(int x, int y, WorldGrid &world_gr
 	for (int i = 0; i < 8; ++i) {
 		const int *offset = NEIGHBOR_OFFSETS[(start + i) % 8];
 		const Vector2i neighbor_position = self_position + Vector2i(offset[0], offset[1]);
-		const Particle neighbor = world_grid.get_particle_readonly(neighbor_position.x, neighbor_position.y);
+		const Particle neighbor = read_cell(x + offset[0], y + offset[1], world_grid, world_origin);
 		if (neighbor.flags & ParticleFlags::PARTICLE_FLAG_REACTED)
 			continue;
 
@@ -231,10 +245,10 @@ bool SandSimulationChunk::check_reaction_rules(int x, int y, WorldGrid &world_gr
 
 			// Route through world_grid so both cells (and any neighboring
 			// chunk sharing a border) get marked dirty.
-			world_grid.set_particle(self_position.x, self_position.y, reaction_product(self, rule.self_into));
+			write_cell(x, y, reaction_product(self, rule.self_into), world_grid, world_origin);
 			world_grid.mark_particle_updated(self_position.x, self_position.y);
 			if (rule.other_into != neighbor.mat_id) {
-				world_grid.set_particle(neighbor_position.x, neighbor_position.y, reaction_product(neighbor, rule.other_into));
+				write_cell(x + offset[0], y + offset[1], reaction_product(neighbor, rule.other_into), world_grid, world_origin);
 				world_grid.mark_particle_updated(neighbor_position.x, neighbor_position.y);
 			}
 			return true;
@@ -265,7 +279,7 @@ bool SandSimulationChunk::check_decay(int x, int y, WorldGrid &world_grid, Vecto
 	// configured byproduct, e.g. Fire -> Smoke. Route through world_grid so
 	// the cell (and any neighboring chunk sharing this border) wakes up.
 	const Vector2i position = world_origin + Vector2i(x, y);
-	world_grid.set_particle(position.x, position.y, reaction_product(self, config.decay_into));
+	write_cell(x, y, reaction_product(self, config.decay_into), world_grid, world_origin);
 	world_grid.mark_particle_updated(position.x, position.y);
 	return true;
 }

@@ -78,9 +78,12 @@ void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
 	world_to_chunk(world_x, world_y, chunk_x, chunk_y);
 	world_to_local(world_x, world_y, local_x, local_y);
 
-	SandSimulationChunk *chunk = get_or_create_chunk(chunk_x, chunk_y);
-	chunk->grid[chunk->get_index(local_x, local_y)] = p;
-	chunk->mark_dirty(local_x, local_y);
+	set_particle_in_chunk(*get_or_create_chunk(chunk_x, chunk_y), chunk_x, chunk_y, local_x, local_y, p);
+}
+
+void WorldGrid::set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, int chunk_y, int local_x, int local_y, const Particle &p) {
+	chunk.grid[chunk.get_index(local_x, local_y)] = p;
+	chunk.mark_dirty(local_x, local_y);
 
 	// An edit on a chunk edge can enable movement in a neighboring chunk
 	// (e.g. clearing space so a sleeping chunk above can now fall into it).

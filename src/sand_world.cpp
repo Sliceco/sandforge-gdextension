@@ -7,6 +7,9 @@
 #include "godot_cpp/variant/rect2i.hpp"
 #include "godot_cpp/variant/string.hpp"
 
+#include <algorithm>
+#include <cstring>
+
 void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SandWorld::clear);
 	ClassDB::bind_method(D_METHOD("save_snapshot"), &SandWorld::save_snapshot);
@@ -148,26 +151,53 @@ PackedByteArray SandWorld::render_to_texture(Vector2i texture_size, Vector2i wor
 	int pixel_count = texture_size.x * texture_size.y;
 	buffer.resize(pixel_count * 4); // RGBA8888
 
+	if (pixel_count <= 0)
+		return buffer;
+
+	// Precompute the RGBA8 palette once; index 0 (empty) is opaque black.
 	const MaterialRegistry &registry = world_grid.get_material_registry();
+	uint8_t palette[256][4] = { { 0, 0, 0, 255 } };
+	for (int id = 1; id < 256; ++id) {
+		const Color &color = registry.get((uint8_t)id).color;
+		palette[id][0] = (uint8_t)(color.r * 255);
+		palette[id][1] = (uint8_t)(color.g * 255);
+		palette[id][2] = (uint8_t)(color.b * 255);
+		palette[id][3] = (uint8_t)(color.a * 255);
+	}
+
 	uint8_t *data = buffer.ptrw();
+	for (int i = 0; i < pixel_count; ++i) {
+		std::memcpy(data + i * 4, palette[0], 4);
+	}
 
-	for (int y = 0; y < texture_size.y; ++y) {
-		for (int x = 0; x < texture_size.x; ++x) {
-			int world_x = world_offset.x + x;
-			int world_y = world_offset.y + y;
+	// Walk only the chunks overlapping the view: one hash lookup per chunk
+	// instead of per pixel, and missing chunks stay background.
+	constexpr int SIZE = SandSimulationChunk::SIZE;
+	int chunk_min_x, chunk_min_y, chunk_max_x, chunk_max_y;
+	WorldGrid::world_to_chunk(world_offset.x, world_offset.y, chunk_min_x, chunk_min_y);
+	WorldGrid::world_to_chunk(world_offset.x + texture_size.x - 1, world_offset.y + texture_size.y - 1, chunk_max_x, chunk_max_y);
 
-			Particle p = world_grid.get_particle_readonly(world_x, world_y);
-			Color color(0, 0, 0, 1); // Default opaque black
+	for (int cy = chunk_min_y; cy <= chunk_max_y; ++cy) {
+		for (int cx = chunk_min_x; cx <= chunk_max_x; ++cx) {
+			const SandSimulationChunk *chunk = world_grid.get_chunk(cx, cy);
+			if (chunk == nullptr)
+				continue;
 
-			if (p.mat_id > 0) {
-				color = registry.get(p.mat_id).color;
+			// Intersect the chunk with the view, in world coordinates.
+			const int x0 = std::max(cx * SIZE, world_offset.x);
+			const int x1 = std::min(cx * SIZE + SIZE, world_offset.x + texture_size.x);
+			const int y0 = std::max(cy * SIZE, world_offset.y);
+			const int y1 = std::min(cy * SIZE + SIZE, world_offset.y + texture_size.y);
+
+			for (int wy = y0; wy < y1; ++wy) {
+				const Particle *row = chunk->grid + (wy - cy * SIZE) * SIZE - cx * SIZE;
+				uint8_t *out = data + ((wy - world_offset.y) * texture_size.x + (x0 - world_offset.x)) * 4;
+				for (int wx = x0; wx < x1; ++wx, out += 4) {
+					const uint8_t id = row[wx].mat_id;
+					if (id != 0)
+						std::memcpy(out, palette[id], 4);
+				}
 			}
-
-			int pixel_idx = (y * texture_size.x + x) * 4;
-			data[pixel_idx + 0] = (uint8_t)(color.r * 255);
-			data[pixel_idx + 1] = (uint8_t)(color.g * 255);
-			data[pixel_idx + 2] = (uint8_t)(color.b * 255);
-			data[pixel_idx + 3] = (uint8_t)(color.a * 255);
 		}
 	}
 

@@ -55,6 +55,10 @@ public:
 	// Set a particle at world coordinates, creating chunks as needed
 	void set_particle(int world_x, int world_y, const Particle &p);
 
+	// Same as set_particle() for a cell already known to live in `chunk`
+	// (at chunk_x, chunk_y), skipping the hash lookup for the owning chunk.
+	void set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, int chunk_y, int local_x, int local_y, const Particle &p);
+
 	// Records a cell holding a particle with transient flags (moved or
 	// reacted this tick) so they can be cleared before the next tick
 	// without scanning an entire chunk.
