@@ -1,6 +1,8 @@
 #include "sand_world.h"
 
 #include "godot_cpp/core/class_db.hpp"
+#include "godot_cpp/core/error_macros.hpp"
+#include "godot_cpp/variant/array.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
 #include "godot_cpp/variant/rect2i.hpp"
 #include "godot_cpp/variant/string.hpp"
@@ -9,8 +11,10 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SandWorld::clear);
 	ClassDB::bind_method(D_METHOD("save_snapshot"), &SandWorld::save_snapshot);
 	ClassDB::bind_method(D_METHOD("load_snapshot", "snapshot"), &SandWorld::load_snapshot);
-	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "flammability", "acid_reactive", "decay_chance", "decay_into"),
+	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "decay_chance", "decay_into"),
 						 &SandWorld::add_material, DEFVAL(0), DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("add_reaction", "material", "other", "material_into", "other_into", "chance"), &SandWorld::add_reaction);
+	ClassDB::bind_method(D_METHOD("clear_reactions"), &SandWorld::clear_reactions);
 	ClassDB::bind_method(D_METHOD("set_materials_from_dict", "materials"), &SandWorld::set_materials_from_dict);
 	ClassDB::bind_method(D_METHOD("set_particle", "pos", "mat_id"), &SandWorld::set_particle);
 	ClassDB::bind_method(D_METHOD("get_particle_mat_id", "pos"), &SandWorld::get_particle_mat_id);
@@ -20,51 +24,30 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("explosion", "pos", "radius"), &SandWorld::explosion);
 	ClassDB::bind_method(D_METHOD("render_to_texture", "texture_size", "world_offset"), &SandWorld::render_to_texture);
 	ClassDB::bind_method(D_METHOD("tick"), &SandWorld::tick);
+	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &SandWorld::set_seed);
 	ClassDB::bind_method(D_METHOD("get_chunk_count"), &SandWorld::get_chunk_count);
 	ClassDB::bind_method(D_METHOD("get_debug_chunk_info"), &SandWorld::get_debug_chunk_info);
 }
 
 SandWorld::SandWorld() {
-	// Initialize with default materials
-	auto &registry = SandSimulationChunk::mat_registry;
-	if (registry.empty()) {
-		registry.resize(256); // Support up to 256 material types
-
-		// Empty (ID 0) - already at default
-
-		// Stone (ID 1)
-		registry[1] = MaterialConfig{
-			.id = 1,
+	// Each world starts with a few default materials (ID 0 stays empty).
+	MaterialRegistry &registry = world_grid.get_material_registry();
+	registry.set(MaterialConfig{
+			.id = 1, // Stone
 			.state = MatterState::SOLID_FIXED,
 			.color = Color(0.5f, 0.5f, 0.5f, 1.0f),
-			.density = 100,
-			.dispersion = 0,
-			.flammability = 0,
-			.acid_reactive = 0
-		};
-
-		// Sand (ID 2)
-		registry[2] = MaterialConfig{
-			.id = 2,
+			.density = 100 });
+	registry.set(MaterialConfig{
+			.id = 2, // Sand
 			.state = MatterState::SOLID_POWDER,
 			.color = Color(0.9f, 0.85f, 0.6f, 1.0f),
-			.density = 50,
-			.dispersion = 0,
-			.flammability = 0,
-			.acid_reactive = 0
-		};
-
-		// Water (ID 3)
-		registry[3] = MaterialConfig{
-			.id = 3,
+			.density = 50 });
+	registry.set(MaterialConfig{
+			.id = 3, // Water
 			.state = MatterState::LIQUID,
 			.color = Color(0.2f, 0.4f, 0.8f, 1.0f),
 			.density = 30,
-			.dispersion = 4,
-			.flammability = 0,
-			.acid_reactive = 0
-		};
-	}
+			.dispersion = 4 });
 }
 
 void SandWorld::clear() {
@@ -79,30 +62,38 @@ bool SandWorld::load_snapshot(const PackedByteArray &snapshot) {
 	return world_grid.deserialize(snapshot);
 }
 
-void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int flammability, int acid_reactive, int decay_chance, int decay_into) {
-	auto &registry = SandSimulationChunk::mat_registry;
+void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int decay_chance, int decay_into) {
+	ERR_FAIL_COND_MSG(id < 1 || id > 255, "Material id must be in 1..255 (0 is reserved for empty).");
+	ERR_FAIL_COND_MSG(state < (int)MatterState::EMPTY || state > (int)MatterState::GAS, "Material state must be in 0..4.");
+	ERR_FAIL_COND_MSG(decay_into < 0 || decay_into > 255, "decay_into must be a material id in 0..255.");
 
-	// Ensure registry is large enough
-	if ((size_t)id >= registry.size()) {
-		registry.resize(id + 1);
-	}
+	world_grid.get_material_registry().set(MaterialConfig{
+			.id = (uint8_t)id,
+			.state = (MatterState)state,
+			.color = color,
+			.density = (uint8_t)CLAMP(density, 0, 255),
+			.dispersion = (uint8_t)CLAMP(dispersion, 0, 255),
+			.decay_chance = (uint8_t)CLAMP(decay_chance, 0, 255),
+			.decay_into = (uint8_t)decay_into });
+}
 
-	registry[id] = MaterialConfig{
-		.id = (uint8_t)id,
-		.state = (MatterState)state,
-		.color = color,
-		.density = (uint8_t)density,
-		.dispersion = (uint8_t)dispersion,
-		.flammability = (uint8_t)flammability,
-		.acid_reactive = (uint8_t)acid_reactive,
-		.decay_chance = (uint8_t)decay_chance,
-		.decay_into = (uint8_t)decay_into
-	};
+void SandWorld::add_reaction(int material, int other, int material_into, int other_into, int chance) {
+	ERR_FAIL_COND_MSG(material < 1 || material > 255, "Reaction material must be in 1..255.");
+	ERR_FAIL_COND_MSG(other < 0 || other > 255 || material_into < 0 || material_into > 255 || other_into < 0 || other_into > 255,
+					  "Reaction material ids must be in 0..255.");
+	ERR_FAIL_COND_MSG(chance < 1 || chance > 255, "Reaction chance must be in 1..255.");
+
+	world_grid.get_material_registry().add_reaction((uint8_t)material, ReactionRule{ .other = (uint8_t)other, .self_into = (uint8_t)material_into, .other_into = (uint8_t)other_into, .chance = (uint8_t)chance });
+}
+
+void SandWorld::clear_reactions() {
+	world_grid.get_material_registry().clear_reactions();
 }
 
 void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
-	for (int i = 0; i < materials_dict.size(); ++i) {
-		Variant key = materials_dict.keys()[i];
+	Array keys = materials_dict.keys();
+	for (int i = 0; i < keys.size(); ++i) {
+		Variant key = keys[i];
 		Variant value = materials_dict[key];
 
 		Variant::Type key_type = key.get_type();
@@ -119,12 +110,24 @@ void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
 		Color color = mat_dict.get("color", Color(1, 1, 1, 1));
 		int density = mat_dict.get("density", 0);
 		int dispersion = mat_dict.get("dispersion", 0);
-		int flammability = mat_dict.get("flammability", 0);
-		int acid_reactive = mat_dict.get("acid_reactive", 0);
 		int decay_chance = mat_dict.get("decay_chance", 0);
 		int decay_into = mat_dict.get("decay_into", 0);
 
-		add_material(mat_id, "", state, color, density, dispersion, flammability, acid_reactive, decay_chance, decay_into);
+		add_material(mat_id, "", state, color, density, dispersion, decay_chance, decay_into);
+
+		// A "reactions" array replaces this material's existing rules. Each
+		// entry: { other, chance, into = mat_id, other_into = other }.
+		if (!mat_dict.has("reactions") || mat_id < 1 || mat_id > 255)
+			continue;
+		world_grid.get_material_registry().clear_reactions((uint8_t)mat_id);
+		Array reactions = mat_dict["reactions"];
+		for (int r = 0; r < reactions.size(); ++r) {
+			if (reactions[r].get_type() != Variant::DICTIONARY)
+				continue;
+			Dictionary reaction = reactions[r];
+			int other = reaction.get("other", 0);
+			add_reaction(mat_id, other, reaction.get("into", mat_id), reaction.get("other_into", other), reaction.get("chance", 0));
+		}
 	}
 }
 
@@ -145,7 +148,7 @@ PackedByteArray SandWorld::render_to_texture(Vector2i texture_size, Vector2i wor
 	int pixel_count = texture_size.x * texture_size.y;
 	buffer.resize(pixel_count * 4); // RGBA8888
 
-	auto &registry = SandSimulationChunk::mat_registry;
+	const MaterialRegistry &registry = world_grid.get_material_registry();
 	uint8_t *data = buffer.ptrw();
 
 	for (int y = 0; y < texture_size.y; ++y) {
@@ -156,8 +159,8 @@ PackedByteArray SandWorld::render_to_texture(Vector2i texture_size, Vector2i wor
 			Particle p = world_grid.get_particle_readonly(world_x, world_y);
 			Color color(0, 0, 0, 1); // Default opaque black
 
-			if (p.mat_id > 0 && p.mat_id < (int)registry.size()) {
-				color = registry[p.mat_id].color;
+			if (p.mat_id > 0) {
+				color = registry.get(p.mat_id).color;
 			}
 
 			int pixel_idx = (y * texture_size.x + x) * 4;
@@ -173,6 +176,10 @@ PackedByteArray SandWorld::render_to_texture(Vector2i texture_size, Vector2i wor
 
 void SandWorld::tick() {
 	world_grid.tick();
+}
+
+void SandWorld::set_seed(int64_t seed) {
+	world_grid.set_seed((uint64_t)seed);
 }
 
 int SandWorld::get_chunk_count() const {

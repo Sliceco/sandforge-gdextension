@@ -51,12 +51,18 @@ func _on_canvas_input(event: InputEvent) -> void:
 
 
 func _configure_materials() -> void:
-	world.add_material(1, "Stone", 1, Color("808080"), 100, 0, 0, 80)
-	world.add_material(2, "Sand", 2, Color("e6d899"), 50, 0, 120, 120)
-	world.add_material(3, "Water", 3, Color("3366cc"), 30, 4, 0, 0)
-	world.add_material(4, "Acid", 3, Color("78d83d"), 45, 3, 0, 0)
-	world.add_material(5, "Fire", 4, Color("ff6b21"), 1, 0, 0, 0, 40, 6)
-	world.add_material(6, "Smoke", 4, Color("888888aa"), 1, 3, 0, 0, 3, 0)
+	world.add_material(1, "Stone", 1, Color("808080"), 100, 0)
+	world.add_material(2, "Sand", 2, Color("e6d899"), 50, 0)
+	world.add_material(3, "Water", 3, Color("3366cc"), 30, 4)
+	world.add_material(4, "Acid", 3, Color("78d83d"), 45, 3)
+	world.add_material(5, "Fire", 4, Color("ff6b21"), 1, 0, 40, 6)
+	world.add_material(6, "Smoke", 4, Color("888888aa"), 1, 3, 3, 0)
+
+	# add_reaction(material, touching, material_becomes, touching_becomes, chance/256)
+	world.add_reaction(1, 4, 0, 4, 80) # Acid dissolves stone
+	world.add_reaction(2, 4, 0, 4, 120) # Acid dissolves sand
+	world.add_reaction(2, 5, 5, 5, 120) # Sand catches fire
+	world.add_reaction(5, 3, 6, 3, 200) # Water puts out fire, leaving smoke
 
 
 func _build_interface() -> void:

@@ -32,14 +32,15 @@ Three layers, only the top one is a Godot class:
 Invariants that are easy to break:
 
 - All particle mutations must go through `WorldGrid::set_particle()`, never `chunk->grid[]` or the mutable `get_particle()` reference. `set_particle` marks the dirty rect and wakes the mirrored cell in an existing neighbor chunk for border edits; bypassing it leaves neighbors asleep.
-- Moved particles carry a transient "updated" flag so they move at most once per tick, including across chunk boundaries; `mark_particle_updated()` records them and `WorldGrid::tick()` clears them first. The regression tests cover exactly this (once-per-tick crossing, contiguous columns across seams).
+- Moved particles carry a transient `UPDATED` flag so they move at most once per tick, including across chunk boundaries; reaction products carry `REACTED` so reactions spread at most one cell per tick. `mark_particle_updated()` records any cell holding transient flags (including a particle displaced by a swap) and `WorldGrid::tick()` clears them first; an unrecorded flag freezes that particle forever.
+- A chance-based reaction or decay that loses its roll must `mark_dirty()` its cell, or it stalls once the chunk sleeps.
 - `get_particle_readonly()` never allocates chunks; writes do.
-- The material registry is the static `SandSimulationChunk::mat_registry`, shared across all `SandWorld` instances.
+- Each `WorldGrid` owns its `MaterialRegistry` (materials + reaction rules) and `SimRandom`. All simulation randomness must come from `world_grid.get_random()`, never `rand()`, so a seed reproduces a run.
 
 ## Conventions
 
 - Changing a GDScript-visible `SandWorld` API means updating three places together: the C++ declaration/implementation, `_bind_methods()`, and `doc_classes/SandWorld.xml` (compiled into editor/template_debug builds as doc data).
-- Material IDs are `uint8_t`; `0` = empty. Reactions hardcode `ACID_MAT_ID` = 4 and `FIRE_MAT_ID` = 5. `MatterState` ints are part of the GDScript contract: `0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS`.
+- Material IDs are `uint8_t`; `0` = empty. No material IDs are hardcoded: interactions are `ReactionRule`s registered via `add_reaction()`. `MatterState` ints are part of the GDScript contract: `0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS`.
 - Keep simulation internals as plain C++ types; only engine-derived classes get `GDCLASS`/binding/registration.
 - `project/bin/sandforge.gdextension`'s `entry_symbol` (`sandforge_library_init`) and library filenames must match `register_types.cpp` and the `SandForge` libname in `SConstruct`.
 - Formatting: tabs (width 4), LLVM-derived `.clang-format`, project headers before system headers.

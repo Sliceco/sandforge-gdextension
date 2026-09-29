@@ -7,7 +7,9 @@
 
 #include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
+#include "material_registry.h"
 #include "sand_chunk.h"
+#include "sim_random.h"
 
 using namespace godot;
 
@@ -53,8 +55,9 @@ public:
 	// Set a particle at world coordinates, creating chunks as needed
 	void set_particle(int world_x, int world_y, const Particle &p);
 
-	// Records a particle that moved this tick so its transient update flag can
-	// be cleared before the next tick without scanning an entire chunk.
+	// Records a cell holding a particle with transient flags (moved or
+	// reacted this tick) so they can be cleared before the next tick
+	// without scanning an entire chunk.
 	void mark_particle_updated(int world_x, int world_y);
 
 	// Update all active chunks
@@ -70,15 +73,14 @@ public:
 	// Get the number of active chunks
 	int get_chunk_count() const { return chunks.size(); }
 
-	// Get material registry reference
-	static const std::vector<MaterialConfig> &get_material_registry() {
-		return SandSimulationChunk::mat_registry;
-	}
+	// Materials and reaction rules for this world.
+	MaterialRegistry &get_material_registry() { return materials; }
+	const MaterialRegistry &get_material_registry() const { return materials; }
 
-	// Set material registry
-	static void set_material_registry(const std::vector<MaterialConfig> &registry) {
-		SandSimulationChunk::mat_registry = registry;
-	}
+	// All simulation randomness comes from here, so a world replays
+	// identically for a given seed and initial state.
+	SimRandom &get_random() { return random; }
+	void set_seed(std::uint64_t seed) { random.seed(seed); }
 
 	// Per-chunk debug snapshot: chunk coordinates plus its current
 	// dirty rect (in local chunk-space cells). Used by debug overlays to
@@ -98,4 +100,6 @@ private:
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;
 	std::vector<Vector2i> updated_particles;
 	bool alternate_direction = false;
+	MaterialRegistry materials;
+	SimRandom random;
 };

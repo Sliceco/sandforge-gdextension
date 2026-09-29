@@ -6,10 +6,10 @@
 	<description>
 		SandWorld is a GDExtension providing a falling sand simulation engine optimized for Godot 4.x. It uses:
 		- Flat memory layout with 64x64 pixel chunks
-		- Dynamic data-driven material configurations
+		- Dynamic data-driven material configurations and reaction rules
 		- Sparse chunked world grid for large landscapes
 		- Direct texture rendering via PackedByteArray
-		Features SOLID_POWDER and LIQUID physics, chemical reactions (acid, fire), and interactive brushes.
+		Features SOLID_POWDER, LIQUID and GAS physics, configurable reactions between materials, and interactive brushes.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -22,13 +22,27 @@
 			<param index="3" name="color" type="Color" />
 			<param index="4" name="density" type="int" />
 			<param index="5" name="dispersion" type="int" />
-			<param index="6" name="flammability" type="int" />
-			<param index="7" name="acid_reactive" type="int" />
-			<param index="8" name="decay_chance" type="int" default="0" />
-			<param index="9" name="decay_into" type="int" default="0" />
+			<param index="6" name="decay_chance" type="int" default="0" />
+			<param index="7" name="decay_into" type="int" default="0" />
 			<description>
-				Register a material type with the simulation. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
-				Density determines sinking/floating for SOLID_POWDER/LIQUID (higher sinks); for GAS it inverts, so lower density rises past denser gas/fluid. Dispersion affects liquid/gas horizontal spread. Flammability and acid_reactive use 0-255 probability. decay_chance is the 0-255 per-tick probability this material converts into decay_into (e.g. Fire decaying into Smoke); 0 disables decay.
+				Register a material type with this world ([param id] 1-255; 0 is empty). Materials are per-world. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
+				Density determines sinking/floating for SOLID_POWDER/LIQUID (higher sinks); for GAS it inverts, so lower density rises past denser gas/fluid. Dispersion is how many empty cells a liquid/gas can slide sideways per tick. decay_chance is the 0-255 per-tick probability this material converts into decay_into (e.g. Fire decaying into Smoke); 0 disables decay. Interactions with other materials are defined with [method add_reaction].
+			</description>
+		</method>
+		<method name="add_reaction">
+			<return type="void" />
+			<param index="0" name="material" type="int" />
+			<param index="1" name="other" type="int" />
+			<param index="2" name="material_into" type="int" />
+			<param index="3" name="other_into" type="int" />
+			<param index="4" name="chance" type="int" />
+			<description>
+				Register a reaction: each tick, a cell of [param material] touching (8-neighborhood) a cell of [param other] has a [param chance]/256 probability (1-255) of turning into [param material_into] while the neighbor turns into [param other_into]. Pass the original ID to leave a cell unchanged, or 0 to remove it. Rules are checked in registration order. Reaction products can't react again in the same tick.
+				[codeblock]
+				world.add_reaction(SAND, FIRE, FIRE, FIRE, 120)   # sand catches fire
+				world.add_reaction(STONE, ACID, 0, ACID, 80)      # acid dissolves stone
+				world.add_reaction(FIRE, WATER, SMOKE, WATER, 200) # water puts out fire
+				[/codeblock]
 			</description>
 		</method>
 		<method name="brush_circle">
@@ -62,7 +76,13 @@
 		<method name="clear">
 			<return type="void" />
 			<description>
-				Clear all particles from the simulation.
+				Clear all particles from the simulation. Materials and reactions are kept.
+			</description>
+		</method>
+		<method name="clear_reactions">
+			<return type="void" />
+			<description>
+				Remove every reaction registered with [method add_reaction].
 			</description>
 		</method>
 		<method name="load_snapshot">
@@ -114,13 +134,20 @@
 			<return type="void" />
 			<param index="0" name="materials" type="Dictionary" />
 			<description>
-				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, flammability, acid_reactive, decay_chance, decay_into.
+				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, decay_chance, decay_into, and optionally reactions. If present, reactions is an Array of Dictionaries with keys other, chance, into (defaults to the material itself) and other_into (defaults to other), and replaces that material's existing reactions. See [method add_reaction].
 			</description>
 		</method>
 		<method name="save_snapshot" qualifiers="const">
 			<return type="PackedByteArray" />
 			<description>
 				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and particle material IDs and flags, but not material definitions.
+			</description>
+		</method>
+		<method name="set_seed">
+			<return type="void" />
+			<param index="0" name="seed" type="int" />
+			<description>
+				Seed this world's random number generator. The same seed, materials and initial particles produce the same simulation.
 			</description>
 		</method>
 		<method name="set_particle">

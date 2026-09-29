@@ -119,7 +119,7 @@ void WorldGrid::clear_updated_particles() {
 		SandSimulationChunk *chunk = get_chunk(chunk_x, chunk_y);
 		if (chunk != nullptr) {
 			Particle &particle = chunk->grid[chunk->get_index(local_x, local_y)];
-			particle.flags &= ~ParticleFlags::PARTICLE_FLAG_UPDATED;
+			particle.flags &= ~ParticleFlags::PARTICLE_FLAGS_TRANSIENT;
 		}
 	}
 	updated_particles.clear();
@@ -241,7 +241,7 @@ bool WorldGrid::deserialize(const PackedByteArray &data) {
 		for (Particle &particle : chunk->grid) {
 			particle.mat_id = data[offset++];
 			particle.flags = data[offset++];
-			particle.flags &= ~ParticleFlags::PARTICLE_FLAG_UPDATED;
+			particle.flags &= ~ParticleFlags::PARTICLE_FLAGS_TRANSIENT;
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {
