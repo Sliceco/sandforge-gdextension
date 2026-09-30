@@ -1,0 +1,74 @@
+{
+	"1": {
+		"name": "Stone", "state": 1, "color": "#808080", "density": 100, "color_variation": 10,
+		"max_hp": 120, "break_into": 10
+	},
+	"2": {
+		"name": "Sand", "state": 2, "color": "#e6d899", "density": 50, "color_variation": 14
+	},
+	"3": {
+		"name": "Water", "state": 3, "color": "#3366cc", "density": 30, "dispersion": 4, "color_variation": 4
+	},
+	"4": {
+		"name": "Acid", "state": 3, "color": "#78d83d", "density": 45, "dispersion": 3, "color_variation": 6,
+		"reactions": [
+			{ "other": 1, "chance": 60, "damage": 30, "into": 0 },
+			{ "other": 2, "chance": 80, "other_into": 0 },
+			{ "other": 7, "chance": 60, "other_into": 0 },
+			{ "other": 9, "chance": 120, "other_into": 0 },
+			{ "other": 10, "chance": 60, "other_into": 0 }
+		]
+	},
+	"5": {
+		"name": "Fire", "state": 4, "color": "#ff6b21", "density": 1, "color_variation": 30,
+		"decay_chance": 40, "decay_into": 6,
+		"reactions": [
+			{ "other": 3, "chance": 200, "into": 11 }
+		]
+	},
+	"6": {
+		"name": "Smoke", "state": 4, "color": "#888888aa", "density": 1, "dispersion": 3, "color_variation": 12,
+		"decay_chance": 3, "decay_into": 0
+	},
+	"7": {
+		"name": "Wood", "state": 1, "color": "#8b5a2b", "density": 100, "color_variation": 12,
+		"max_hp": 60, "break_into": 9,
+		"reactions": [
+			{ "other": 5, "chance": 40, "into": 8 },
+			{ "other": 8, "chance": 6, "into": 8 },
+			{ "other": 13, "chance": 80, "into": 8 }
+		]
+	},
+	"8": {
+		"name": "Burning Wood", "state": 1, "color": "#c2410c", "density": 100, "color_variation": 40,
+		"max_hp": 60, "hp_loss_chance": 128, "break_into": 9,
+		"reactions": [
+			{ "other": 3, "chance": 120, "into": 7, "other_into": 11 },
+			{ "other": 0, "chance": 20, "other_into": 5 }
+		]
+	},
+	"9": {
+		"name": "Ash", "state": 2, "color": "#4a4a4a", "density": 20, "color_variation": 10
+	},
+	"10": {
+		"name": "Gravel", "state": 2, "color": "#6b6b6b", "density": 70, "color_variation": 18
+	},
+	"11": {
+		"name": "Steam", "state": 4, "color": "#d6e4f0aa", "density": 2, "dispersion": 3, "color_variation": 8,
+		"decay_chance": 3, "decay_into": 3
+	},
+	"12": {
+		"name": "Oil", "state": 3, "color": "#3b2f1e", "density": 20, "dispersion": 4, "color_variation": 4,
+		"reactions": [
+			{ "other": 5, "chance": 120, "into": 5 },
+			{ "other": 8, "chance": 60, "into": 5 },
+			{ "other": 13, "chance": 120, "into": 5 }
+		]
+	},
+	"13": {
+		"name": "Lava", "state": 3, "color": "#ff4500", "density": 90, "dispersion": 1, "color_variation": 24,
+		"reactions": [
+			{ "other": 3, "chance": 150, "into": 1, "other_into": 11 }
+		]
+	}
+}

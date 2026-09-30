@@ -93,4 +93,7 @@ private:
 	void check_neighborhood_reactions(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	bool check_reaction_rules(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	bool check_decay(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// Lifetime: materials with hp_loss_chance lose 1 hp per successful roll
+	// and turn into break_into when it runs out.
+	bool check_hp_loss(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 };

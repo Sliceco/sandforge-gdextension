@@ -6,9 +6,9 @@
 
 namespace {
 constexpr uint8_t SNAPSHOT_MAGIC[] = { 'S', 'F', 'W', '1' };
-constexpr uint32_t SNAPSHOT_VERSION = 2;
+constexpr uint32_t SNAPSHOT_VERSION = 3;
 constexpr size_t SNAPSHOT_HEADER_SIZE = 12;
-constexpr size_t SNAPSHOT_CHUNK_SIZE = 8 + SandSimulationChunk::SIZE * SandSimulationChunk::SIZE * 2;
+constexpr size_t SNAPSHOT_CHUNK_SIZE = 8 + SandSimulationChunk::SIZE * SandSimulationChunk::SIZE * 4;
 
 void append_u32(std::vector<uint8_t> &data, uint32_t value) {
 	for (int shift = 0; shift < 32; shift += 8) {
@@ -105,6 +105,49 @@ void WorldGrid::set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, i
 			neighbor->mark_dirty(mirrored_x, mirrored_y);
 		}
 	}
+}
+
+Particle WorldGrid::make_particle(uint8_t mat_id) {
+	if (mat_id == 0) {
+		return Particle();
+	}
+	Particle p;
+	p.mat_id = mat_id;
+	p.hp = materials.get(mat_id).max_hp;
+	p.shade = random.next_u8();
+	return p;
+}
+
+Particle WorldGrid::convert_particle(Particle source, uint8_t into) const {
+	if (into == 0) {
+		return Particle();
+	}
+	// A reaction that leaves a cell's material unchanged (e.g. burning wood
+	// igniting its surroundings) must not refill its hp.
+	if (into != source.mat_id) {
+		source.mat_id = into;
+		source.hp = materials.get(into).max_hp;
+	}
+	return source;
+}
+
+int WorldGrid::damage_particle(int world_x, int world_y, int amount) {
+	if (amount <= 0) {
+		return 0;
+	}
+	Particle p = get_particle_readonly(world_x, world_y);
+	if (p.mat_id == 0) {
+		return amount;
+	}
+
+	const int toughness = std::max<int>(p.hp, 1);
+	if (amount < toughness) {
+		p.hp = static_cast<uint8_t>(p.hp - amount);
+		set_particle(world_x, world_y, p);
+		return 0;
+	}
+	set_particle(world_x, world_y, convert_particle(p, materials.get(p.mat_id).break_into));
+	return amount - toughness;
 }
 
 void WorldGrid::mark_particle_updated(int world_x, int world_y) {
@@ -244,6 +287,8 @@ std::vector<uint8_t> WorldGrid::serialize() const {
 		for (const Particle &particle : chunk.grid) {
 			data.push_back(particle.mat_id);
 			data.push_back(particle.flags);
+			data.push_back(particle.hp);
+			data.push_back(particle.shade);
 		}
 	}
 
@@ -344,6 +389,9 @@ bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
 				return false;
 			}
 			particle.mat_id = static_cast<uint8_t>(remap[stored_id]);
+			// Clamp in case the material's max_hp was lowered since the save.
+			particle.hp = std::min(data[offset++], materials.get(particle.mat_id).max_hp);
+			particle.shade = data[offset++];
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {

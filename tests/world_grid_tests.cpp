@@ -267,6 +267,113 @@ void test_same_seed_is_deterministic() {
 }
 } // namespace
 
+void expect(bool condition, const char *message) {
+	if (!condition) {
+		std::cerr << message << '\n';
+		std::exit(EXIT_FAILURE);
+	}
+}
+
+// Stone that takes 100 damage to break and crumbles into sand.
+void configure_hard_stone(WorldGrid &world) {
+	configure_materials(world);
+	MaterialConfig stone = world.get_material_registry().get(STONE);
+	stone.max_hp = 100;
+	stone.break_into = SAND;
+	world.get_material_registry().set(stone);
+}
+
+void test_hp_loss_wears_out_material() {
+	WorldGrid world;
+	configure_materials(world);
+	MaterialConfig ember = world.get_material_registry().get(EMBER);
+	ember.max_hp = 3;
+	ember.hp_loss_chance = 255;
+	ember.break_into = BRICK;
+	world.get_material_registry().set(ember);
+	world.set_particle(5, 5, world.make_particle(EMBER));
+	expect(world.get_particle_readonly(5, 5).hp == 3, "new particles must start at the material's max_hp");
+
+	// Isolated and unable to move, only its lifetime keeps the chunk awake.
+	for (int tick = 0; tick < 3000 && world.get_particle_readonly(5, 5).mat_id == EMBER; ++tick) {
+		world.tick();
+	}
+	expect_material(world, 5, 5, BRICK, "material losing hp over time must turn into break_into");
+	expect(world.get_particle_readonly(5, 5).hp == 0, "break products must start at their own max_hp");
+}
+
+void test_reacting_without_changing_material_keeps_wearing_out() {
+	WorldGrid world;
+	configure_materials(world);
+	MaterialConfig ember = world.get_material_registry().get(EMBER);
+	ember.max_hp = 20;
+	ember.hp_loss_chance = 255;
+	ember.break_into = BRICK;
+	world.get_material_registry().set(ember);
+	// Like burning wood igniting the air around it: the ember stays an ember.
+	world.get_material_registry().add_reaction(EMBER, { 0, EMBER, SMOKE, 255 });
+	world.set_particle(5, 5, world.make_particle(EMBER));
+
+	for (int tick = 0; tick < 200 && world.get_particle_readonly(5, 5).mat_id == EMBER; ++tick) {
+		world.tick();
+	}
+	expect_material(world, 5, 5, BRICK, "reactions that keep a particle's material must not refill its hp");
+}
+
+void test_damage_particle_absorbs_and_breaks() {
+	WorldGrid world;
+	configure_hard_stone(world);
+	world.set_particle(5, 5, world.make_particle(STONE));
+
+	expect(world.damage_particle(5, 5, 60) == 0, "a particle surviving a hit must absorb all of it");
+	expect(world.get_particle_readonly(5, 5).hp == 40, "damage must reduce hp");
+	expect_material(world, 5, 5, STONE, "a damaged particle must keep its material");
+
+	expect(world.damage_particle(5, 5, 50) == 10, "breaking a particle must return the leftover damage");
+	expect_material(world, 5, 5, SAND, "a broken particle must become break_into");
+
+	expect(world.damage_particle(5, 5, 7) == 6, "fragile material must cost 1 damage to break");
+	expect_material(world, 5, 5, 0, "fragile material without break_into must be destroyed");
+	expect(world.damage_particle(5, 5, 7) == 7, "empty cells must not absorb damage");
+}
+
+void test_reaction_damage_erodes_neighbor() {
+	WorldGrid world;
+	configure_hard_stone(world);
+	world.get_material_registry().add_reaction(ACID, { STONE, ACID, 0, 255, 40 });
+	for (int x = 4; x <= 6; ++x) {
+		world.set_particle(x, 6, particle(BRICK));
+	}
+	world.set_particle(4, 5, particle(BRICK));
+	world.set_particle(6, 5, particle(BRICK));
+	world.set_particle(5, 4, world.make_particle(STONE));
+	world.set_particle(5, 5, particle(ACID));
+
+	world.tick();
+	expect_material(world, 5, 4, STONE, "a damaging reaction must not convert a neighbor that has hp left");
+	expect(world.get_particle_readonly(5, 4).hp < 100, "a damaging reaction must reduce the neighbor's hp");
+
+	for (int tick = 0; tick < 3000 && world.get_particle_readonly(5, 4).mat_id == STONE; ++tick) {
+		world.tick();
+	}
+	expect(world.get_particle_readonly(5, 4).mat_id != STONE, "repeated reaction damage must break the neighbor");
+}
+
+void test_snapshot_keeps_hp_and_shade() {
+	WorldGrid source;
+	configure_hard_stone(source);
+	Particle stone = source.make_particle(STONE);
+	stone.shade = 17;
+	source.set_particle(3, 3, stone);
+	source.damage_particle(3, 3, 25);
+
+	WorldGrid loaded;
+	configure_hard_stone(loaded);
+	expect(loaded.deserialize(source.serialize()), "snapshot must load");
+	expect(loaded.get_particle_readonly(3, 3).hp == 75, "snapshots must keep particle hp");
+	expect(loaded.get_particle_readonly(3, 3).shade == 17, "snapshots must keep particle shade");
+}
+
 void test_empty_writes_do_not_allocate_and_idle_chunks_free() {
 	WorldGrid world;
 	configure_materials(world);
@@ -342,5 +449,10 @@ int main() {
 	test_same_seed_is_deterministic();
 	test_empty_writes_do_not_allocate_and_idle_chunks_free();
 	test_snapshot_remaps_by_name();
+	test_hp_loss_wears_out_material();
+	test_reacting_without_changing_material_keeps_wearing_out();
+	test_damage_particle_absorbs_and_breaks();
+	test_reaction_damage_erodes_neighbor();
+	test_snapshot_keeps_hp_and_shade();
 	return EXIT_SUCCESS;
 }

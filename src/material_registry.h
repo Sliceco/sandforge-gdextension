@@ -13,12 +13,15 @@ namespace godot {
 // cell of `other`, with probability chance/256 per tick the cell becomes
 // `self_into` and the neighbor becomes `other_into`. Setting a product to
 // the original material leaves that cell unchanged (e.g. acid that
-// dissolves stone without being consumed).
+// dissolves stone without being consumed). With a non-zero `damage`, the
+// neighbor instead loses that much hp per successful roll and only becomes
+// `other_into` once its hp is exhausted (e.g. acid eroding hard stone).
 struct ReactionRule {
 	std::uint8_t other = 0;
 	std::uint8_t self_into = 0;
 	std::uint8_t other_into = 0;
 	std::uint8_t chance = 0;
+	std::uint8_t damage = 0;
 };
 
 // Per-world material definitions and reaction rules, indexed by mat_id.
@@ -40,6 +43,12 @@ public:
 		for (std::vector<ReactionRule> &rules : reactions) {
 			rules.clear();
 		}
+	}
+
+	// Removes every material and reaction rule.
+	void clear() {
+		materials = {};
+		clear_reactions();
 	}
 
 private:
