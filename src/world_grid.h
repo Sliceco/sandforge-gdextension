@@ -55,6 +55,22 @@ public:
 	// (at chunk_x, chunk_y), skipping the hash lookup for the owning chunk.
 	void set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, int chunk_y, int local_x, int local_y, const Particle &p);
 
+	// A new particle of `mat_id` at full hp with a random shade. Use this
+	// (not a bare Particle) when placing material from outside the simulation.
+	Particle make_particle(std::uint8_t mat_id);
+
+	// `source` turned into `into`: full hp for the new material, keeping its
+	// shade and flags. Converting into its own material keeps its hp.
+	// Returns an empty particle when `into` is 0.
+	Particle convert_particle(Particle source, std::uint8_t into) const;
+
+	// Deals `amount` damage to the particle at a cell. A particle breaks into
+	// its material's break_into once the damage reaches its hp (at least 1).
+	// Returns the damage left over after breaking it, or 0 if the particle
+	// absorbed the hit; an empty cell absorbs nothing. Projectiles can keep
+	// spending the leftover on the next cell along their path.
+	int damage_particle(int world_x, int world_y, int amount);
+
 	// Records a cell holding a particle with transient flags (moved or
 	// reacted this tick) so they can be cleared before the next tick
 	// without scanning an entire chunk.

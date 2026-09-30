@@ -9,7 +9,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 ### Core Components
 
 1. **Particle** (`particle.h`)
-   - Minimal 2-byte structure: `mat_id` (material) + `flags`
+   - 4-byte structure: `mat_id` (material), `flags`, `hp` (remaining durability/lifetime) and `shade` (random per-particle color offset fixed at creation)
    - Flags: `PARTICLE_FLAG_UPDATED` (moved this tick), `PARTICLE_FLAG_REACTED` (produced by a reaction this tick); both are transient and cleared before the next tick
 
 2. **MaterialConfig** (`materialconfig.h`)
@@ -18,6 +18,9 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
      - `density`: Controls sinking/floating (0-255)
      - `dispersion`: Horizontal flow distance for liquids
      - `decay_chance` / `decay_into`: Per-tick probability of converting into another material (e.g. Fire decaying into Smoke)
+     - `max_hp` / `hp_loss_chance` / `break_into`: starting hp, per-tick chance to lose 1 hp (lifetime), and the material a particle becomes when its hp runs out (by damage or over time)
+     - `color_variation`: brightness range scaled by each particle's `shade` when rendering
+   - Every new `SandWorld` starts with the built-in defaults from `data/default_materials.json` (embedded into the library at build time). The first `add_material()` / `set_materials_from_dict()` / `load_materials_json()` call replaces them; `load_default_materials()` restores them so they can be extended.
    - `MaterialRegistry` (`material_registry.h`) holds one `MaterialConfig` per `uint8_t` ID plus the `ReactionRule` table. It is owned by each `WorldGrid`, so worlds don't share materials.
 
 3. **SandSimulationChunk** (`sand_chunk.h/cpp`)
@@ -76,6 +79,11 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 - Particles with `decay_chance > 0` have a per-tick probability of converting into `decay_into`
 - Used so Fire burns out into Smoke instead of burning forever
 - A failed roll keeps the cell dirty, so trapped decaying material still decays
+
+**HP, lifetime and damage**:
+- Every particle starts at its material's `max_hp`. `damage_particle()`, `damage_circle()` and `explosion()` (linear falloff from `power`) reduce it; damage at least equal to the hp (minimum 1) breaks the particle into `break_into` and returns the leftover, so projectiles can carry it through several cells
+- Reaction rules with a non-zero `damage` wear the neighbor down instead of converting it; the neighbor becomes its own `break_into` once exhausted
+- Materials with `hp_loss_chance > 0` lose 1 hp per successful roll and stay awake until they break (e.g. burning wood → ash)
 
 ### Optimization
 

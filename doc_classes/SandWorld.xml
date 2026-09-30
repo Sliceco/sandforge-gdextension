@@ -10,6 +10,7 @@
 		- Sparse chunked world grid for large landscapes
 		- Direct texture rendering via PackedByteArray
 		Features SOLID_POWDER, LIQUID and GAS physics, configurable reactions between materials, and interactive brushes.
+		A new world starts with a built-in set of materials (Stone, Sand, Water, Acid, Fire, Smoke, Wood, Burning Wood, Ash, Gravel, Steam, Oil, Lava), so it can be painted immediately. See [method get_default_materials_json] for their IDs and settings. Registering your own materials replaces them.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -25,7 +26,7 @@
 			<param index="6" name="decay_chance" type="int" default="0" />
 			<param index="7" name="decay_into" type="int" default="0" />
 			<description>
-				Register a material type with this world ([param id] 1-255; 0 is empty). Materials are per-world. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
+				Register a material type with this world ([param id] 1-255; 0 is empty). Materials are per-world. The first material registered on a new world removes all built-in default materials and reactions; call [method load_default_materials] first to extend them instead. State values: 0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS.
 				Density determines sinking/floating for SOLID_POWDER/LIQUID (higher sinks); for GAS it inverts, so lower density rises past denser gas/fluid. Dispersion is how many empty cells a liquid/gas can slide sideways per tick. decay_chance is the 0-255 per-tick probability this material converts into decay_into (e.g. Fire decaying into Smoke); 0 disables decay. Interactions with other materials are defined with [method add_reaction].
 			</description>
 		</method>
@@ -92,12 +93,37 @@
 				Replace the world with a snapshot created by [method save_snapshot]. Material IDs are remapped by the names given to [method add_material], so register the same named materials before loading. Returns [code]false[/code] (and prints the reason) when the data has an invalid or unsupported format, or uses a material name that is not registered; the existing world is left unchanged.
 			</description>
 		</method>
+		<method name="damage_circle">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="radius" type="int" />
+			<param index="2" name="amount" type="int" />
+			<description>
+				Deal [param amount] damage to every particle in a circular area. See [method damage_particle].
+			</description>
+		</method>
+		<method name="damage_particle">
+			<return type="int" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="amount" type="int" />
+			<description>
+				Deal [param amount] damage to the particle at [param pos]. If the damage is less than its hp, the hp is reduced and 0 is returned. Otherwise the particle breaks into its material's break_into (see [method set_materials_from_dict]) and the leftover damage is returned (breaking costs its hp, at least 1). An empty cell returns [param amount] unchanged.
+				The return value lets a projectile keep going: spend the leftover on the next cell along its path, and stop when it reaches 0. To test whether something can penetrate a cell without damaging it, compare its power with [method get_particle_hp].
+			</description>
+		</method>
 		<method name="explosion">
 			<return type="void" />
 			<param index="0" name="pos" type="Vector2i" />
 			<param index="1" name="radius" type="int" />
+			<param index="2" name="power" type="int" default="255" />
 			<description>
-				Clear particles in a circular area (destruction effect).
+				Damage particles in a circular area. Damage is [param power] at the center, falls off linearly with distance, and is at least 1 inside the radius, so materials with max_hp 0 are always destroyed. Particles whose hp is exhausted turn into their material's break_into. See [method damage_particle].
+			</description>
+		</method>
+		<method name="get_default_materials_json" qualifiers="static">
+			<return type="String" />
+			<description>
+				Return the JSON of the built-in default materials every new world starts with, in the format accepted by [method load_materials_json]. Useful as a template for your own material files.
 			</description>
 		</method>
 		<method name="get_chunk_count" qualifiers="const">
@@ -115,11 +141,34 @@
 				- "dirty_rect" (Rect2i): world-space bounds of the cells pending simulation next tick. Zero-sized if the chunk is currently asleep.
 			</description>
 		</method>
+		<method name="get_particle_hp" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="pos" type="Vector2i" />
+			<description>
+				Get the remaining hp (0-255) of the particle at the given position, or 0 if empty. Particles start at their material's max_hp.
+			</description>
+		</method>
 		<method name="get_particle_mat_id" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="pos" type="Vector2i" />
 			<description>
 				Get the material ID of the particle at the given position, or 0 if empty.
+			</description>
+		</method>
+		<method name="load_default_materials">
+			<return type="void" />
+			<description>
+				Replace all materials and reactions with the built-in defaults (see [method get_default_materials_json]). Unlike on a new world, materials registered afterwards are added to the defaults instead of replacing them.
+			</description>
+		</method>
+		<method name="load_materials_json">
+			<return type="bool" />
+			<param index="0" name="json" type="String" />
+			<description>
+				Register materials from a JSON object keyed by material ID, with the same keys as [method set_materials_from_dict] and colors given as HTML strings such as [code]"#e6d899"[/code]. Returns [code]false[/code] if the text is not a JSON object.
+				[codeblock]
+				world.load_materials_json(FileAccess.get_file_as_string("res://materials.json"))
+				[/codeblock]
 			</description>
 		</method>
 		<method name="render_to_texture">
@@ -134,13 +183,26 @@
 			<return type="void" />
 			<param index="0" name="materials" type="Dictionary" />
 			<description>
-				Bulk register materials from a dictionary. Each key is material ID, value is a dict with keys: state, color, density, dispersion, decay_chance, decay_into, and optionally reactions. If present, reactions is an Array of Dictionaries with keys other, chance, into (defaults to the material itself) and other_into (defaults to other), and replaces that material's existing reactions. See [method add_reaction].
+				Bulk register materials from a dictionary. On a new world this first removes the built-in default materials (see [method add_material]). Each key is material ID (an int, or a numeric String as produced by JSON), value is a dict with keys: name, state, color (a Color or an HTML color String), density, dispersion, decay_chance, decay_into (see [method add_material]), plus these optional per-particle keys (all 0-255, default 0):
+				- max_hp: hp a new particle starts with. Damage from [method damage_particle], [method explosion] and damaging reactions reduces it. 0 means any damage breaks the particle.
+				- hp_loss_chance: per-tick probability (out of 256) of losing 1 hp, giving the material a lifetime (e.g. burning wood with max_hp 60).
+				- break_into: material ID the particle becomes when its hp is exhausted, by damage or over time; 0 destroys it.
+				- color_variation: maximum brightness offset applied per particle when rendering, from a random shade fixed when the particle is created.
+				If present, reactions is an Array of Dictionaries with keys other, chance, into (defaults to the material itself), other_into (defaults to other) and damage (defaults to 0), and replaces that material's existing reactions. With a non-zero damage, each successful roll takes that much hp from the neighbor instead of converting it, and the neighbor becomes its own break_into (not other_into) once its hp is exhausted. See [method add_reaction].
+				[codeblock]
+				world.set_materials_from_dict({
+				    1: { "name": "Stone", "state": 1, "color": Color("808080"), "density": 100,
+				         "max_hp": 120, "break_into": 7, "color_variation": 12 },
+				    4: { "name": "Acid", "state": 3, "color": Color("78d83d"), "density": 45, "dispersion": 3,
+				         "reactions": [{ "other": 1, "chance": 80, "damage": 20 }] },
+				})
+				[/codeblock]
 			</description>
 		</method>
 		<method name="save_snapshot" qualifiers="const">
 			<return type="PackedByteArray" />
 			<description>
-				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and particle material IDs and flags, but not material definitions.
+				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and each particle's material ID, flags, hp and shade, but not material definitions. Snapshots from older versions are rejected.
 			</description>
 		</method>
 		<method name="set_seed">
@@ -155,7 +217,7 @@
 			<param index="0" name="pos" type="Vector2i" />
 			<param index="1" name="mat_id" type="int" />
 			<description>
-				Place a particle of the specified material at the given position.
+				Place a particle of the specified material at the given position, with its material's max_hp and a random shade.
 			</description>
 		</method>
 		<method name="tick">

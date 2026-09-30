@@ -27,9 +27,16 @@ public:
 	PackedByteArray save_snapshot() const;
 	bool load_snapshot(const PackedByteArray &snapshot);
 
-	// Material configuration
+	// Material configuration. A new world holds the built-in default
+	// materials until the first add_material(), set_materials_from_dict() or
+	// load_materials_json() call, which clears them before registering.
 	void add_material(int id, const String &name, int state, Color color, int density, int dispersion, int decay_chance = 0, int decay_into = 0);
 	void set_materials_from_dict(const Dictionary &materials_dict);
+	bool load_materials_json(const String &json);
+	// Replaces all materials and reactions with the built-in defaults, which
+	// then stay when more materials are added (to extend them).
+	void load_default_materials();
+	static String get_default_materials_json();
 
 	// Reactions: when `material` touches `other`, with probability
 	// chance/256 per tick they become `material_into` and `other_into`.
@@ -39,12 +46,18 @@ public:
 	// Particle operations
 	void set_particle(Vector2i pos, int mat_id);
 	int get_particle_mat_id(Vector2i pos) const;
+	int get_particle_hp(Vector2i pos) const;
+	// Returns the damage left over after breaking the particle (0 if it
+	// absorbed the hit), so projectiles can carry it into the next cell.
+	int damage_particle(Vector2i pos, int amount);
 
 	// Brush operations (Phase 4)
 	void brush_line(Vector2i from, Vector2i to, int mat_id, int radius);
 	void brush_circle(Vector2i pos, int radius, int mat_id);
 	void brush_rectangle(Vector2i pos, Vector2i size, int mat_id);
-	void explosion(Vector2i pos, int radius);
+	void damage_circle(Vector2i pos, int radius, int amount);
+	// Damage falls off linearly from `power` at the center.
+	void explosion(Vector2i pos, int radius, int power = 255);
 
 	// Rendering
 	PackedByteArray render_to_texture(Vector2i texture_size, Vector2i world_offset);
@@ -65,5 +78,16 @@ public:
 	TypedArray<Dictionary> get_debug_chunk_info() const;
 
 private:
+	// Clears the materials a new world starts with, the first time the
+	// user registers their own.
+	void replace_default_materials();
+
+	bool has_default_materials = false;
+
+	// Validates add_material() arguments into `config`; false (with an
+	// error printed) if they are out of range.
+	static bool make_material_config(int id, const String &name, int state, Color color, int density, int dispersion, int decay_chance, int decay_into, MaterialConfig &config);
+	void add_reaction_rule(int material, int other, int material_into, int other_into, int chance, int damage);
+
 	WorldGrid world_grid;
 };

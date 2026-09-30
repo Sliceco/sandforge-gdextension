@@ -12,6 +12,8 @@ var pause_button: Button
 var brush_slider: HSlider
 var debug_checkbox: CheckButton
 var selected_material := 2
+# Material id -> name, from SandForge's built-in defaults (0 erases).
+var material_names := { 0: "Erase" }
 var paused := false
 var drawing := false
 var show_debug_overlay := false
@@ -21,7 +23,7 @@ var texture: ImageTexture
 
 
 func _ready() -> void:
-	_configure_materials()
+	_load_material_names()
 	_build_interface()
 	_create_texture()
 	_refresh_canvas()
@@ -50,19 +52,11 @@ func _on_canvas_input(event: InputEvent) -> void:
 		previous_world_position = world_position
 
 
-func _configure_materials() -> void:
-	world.add_material(1, "Stone", 1, Color("808080"), 100, 0)
-	world.add_material(2, "Sand", 2, Color("e6d899"), 50, 0)
-	world.add_material(3, "Water", 3, Color("3366cc"), 30, 4)
-	world.add_material(4, "Acid", 3, Color("78d83d"), 45, 3)
-	world.add_material(5, "Fire", 4, Color("ff6b21"), 1, 0, 40, 6)
-	world.add_material(6, "Smoke", 4, Color("888888aa"), 1, 3, 3, 0)
-
-	# add_reaction(material, touching, material_becomes, touching_becomes, chance/256)
-	world.add_reaction(1, 4, 0, 4, 80) # Acid dissolves stone
-	world.add_reaction(2, 4, 0, 4, 120) # Acid dissolves sand
-	world.add_reaction(2, 5, 5, 5, 120) # Sand catches fire
-	world.add_reaction(5, 3, 6, 3, 200) # Water puts out fire, leaving smoke
+func _load_material_names() -> void:
+	# The world already holds the default materials; read their names for the palette.
+	var defaults: Dictionary = JSON.parse_string(SandWorld.get_default_materials_json())
+	for key in defaults:
+		material_names[int(key)] = defaults[key]["name"]
 
 
 func _build_interface() -> void:
@@ -108,12 +102,13 @@ func _build_interface() -> void:
 	var palette := GridContainer.new()
 	palette.columns = 2
 	controls.add_child(palette)
-	for mat in [
-		["Stone", 1], ["Sand", 2], ["Water", 3], ["Acid", 4], ["Fire", 5], ["Smoke", 6], ["Erase", 0],
-	]:
+	var ids := material_names.keys()
+	ids.sort()
+	ids.push_back(ids.pop_front()) # Erase last
+	for id in ids:
 		var button := Button.new()
-		button.text = mat[0]
-		button.pressed.connect(_select_material.bind(mat[1]))
+		button.text = material_names[id]
+		button.pressed.connect(_select_material.bind(id))
 		palette.add_child(button)
 
 	var brush_label := Label.new()
@@ -276,7 +271,6 @@ func _load_snapshot() -> void:
 
 
 func _update_status(message := "") -> void:
-	var material_names := ["Eraser", "Stone", "Sand", "Water", "Acid", "Fire", "Smoke"]
 	var status := "Material: %s\nRadius: %d\nChunks: %d\nSimulation: %s" % [
 		material_names[selected_material],
 		int(brush_slider.value) if brush_slider else 4,

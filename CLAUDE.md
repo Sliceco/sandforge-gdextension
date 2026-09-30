@@ -25,7 +25,7 @@ Manual verification: open `project/project.godot` in Godot and run `sand_sandbox
 
 Three layers, only the top one is a Godot class:
 
-- **`SandWorld`** (`src/sand_world.*`) — `RefCounted` GDCLASS exposed to GDScript; registered in `register_types.cpp`. Brushes, explosions, material registration, snapshot save/load, and `render_to_texture()` (RGBA8888 `PackedByteArray` that GDScript wraps in an `Image`). Delegates everything to a `WorldGrid`.
+- **`SandWorld`** (`src/sand_world.*`) — `RefCounted` GDCLASS exposed to GDScript; registered in `register_types.cpp`. Brushes, explosions, material registration (a new world starts with the defaults from `data/default_materials.json`, which the first user-registered material replaces), snapshot save/load, and `render_to_texture()` (RGBA8888 `PackedByteArray` that GDScript wraps in an `Image`). Delegates everything to a `WorldGrid`.
 - **`WorldGrid`** (`src/world_grid.*`) — sparse `unordered_map<Vector2i, SandSimulationChunk>`; world→chunk via `>> 6` / `& 63` (64-cell chunks, negative coords work). `tick()` sorts chunks bottom row first, with horizontal order following `alternate_direction`, so falls cascade across chunk seams within one tick — don't replace this with map iteration order. Destination chunks created mid-tick are simulated starting next tick.
 - **`SandSimulationChunk`** (`src/sand_chunk.*`) — 64x64 `Particle` array plus `dirty_rect`. A tick snapshots/clears the rect, scans bottom-to-top with alternating horizontal direction, then evaluates reactions in the same region. Empty `dirty_rect` = asleep, skipped. Movement across chunk edges goes through `WorldGrid`.
 
@@ -35,12 +35,14 @@ Invariants that are easy to break:
 - Moved particles carry a transient `UPDATED` flag so they move at most once per tick, including across chunk boundaries; reaction products carry `REACTED` so reactions spread at most one cell per tick. `mark_particle_updated()` records any cell holding transient flags (including a particle displaced by a swap) and `WorldGrid::tick()` clears them first; an unrecorded flag freezes that particle forever.
 - A chance-based reaction or decay that loses its roll must `mark_dirty()` its cell, or it stalls once the chunk sleeps.
 - `get_particle_readonly()` never allocates chunks; writes do, except writing an empty particle into a missing chunk (no-op). `tick()` frees chunks that went to sleep with no particles.
-- Snapshots (`SNAPSHOT_VERSION` 2) store an ID → name table and remap by name on load; `add_material`'s `name` must be stable for that to work.
+- Snapshots (`SNAPSHOT_VERSION` 3, 4 bytes per cell: `mat_id`, `flags`, `hp`, `shade`) store an ID → name table and remap by name on load; `add_material`'s `name` must be stable for that to work. Older versions are rejected.
+- Particles placed from outside the simulation must come from `WorldGrid::make_particle()` (full `max_hp`, random `shade`), and material changes inside it from `convert_particle()` / `reaction_product()`, which reset `hp` for the new material. A bare `Particle{}` has 0 hp. Whenever hp runs out (damage, `hp_loss_chance`, damaging reactions) the particle becomes its material's `break_into`.
 - Each `WorldGrid` owns its `MaterialRegistry` (materials + reaction rules) and `SimRandom`. All simulation randomness must come from `world_grid.get_random()`, never `rand()`, so a seed reproduces a run.
 
 ## Conventions
 
 - Changing a GDScript-visible `SandWorld` API means updating three places together: the C++ declaration/implementation, `_bind_methods()`, and `doc_classes/SandWorld.xml` (compiled into editor/template_debug builds as doc data).
+- Default materials live in `data/default_materials.json` (object keyed by id string, HTML colors). SConstruct validates it (valid JSON, ids 1-255, no references to unknown ids) and embeds it as `src/gen/default_materials.gen.cpp`; edit the JSON, not generated code. The sandbox reads its palette from it.
 - Material IDs are `uint8_t`; `0` = empty. No material IDs are hardcoded: interactions are `ReactionRule`s registered via `add_reaction()`. `MatterState` ints are part of the GDScript contract: `0=EMPTY, 1=SOLID_FIXED, 2=SOLID_POWDER, 3=LIQUID, 4=GAS`.
 - Keep simulation internals as plain C++ types; only engine-derived classes get `GDCLASS`/binding/registration.
 - `project/bin/sandforge.gdextension`'s `entry_symbol` (`sandforge_library_init`) and library filenames must match `register_types.cpp` and the `SandForge` libname in `SConstruct`.

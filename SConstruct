@@ -47,6 +47,46 @@ if env["target"] in ["editor", "template_debug"]:
     except AttributeError:
         print("Not including class reference as we're targeting a pre-4.3 baseline.")
 
+
+def embed_default_materials(target, source, env):
+    """Validate the default materials JSON and compile it in as a C string."""
+    import json
+
+    with open(str(source[0]), "rb") as f:
+        raw = f.read()
+    try:
+        materials = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print_error("{}: invalid JSON: {}".format(source[0], e))
+        return 1
+    ids = set()
+    for key in materials:
+        if not key.isdigit() or not 1 <= int(key) <= 255:
+            print_error("{}: material key '{}' must be an id in 1..255".format(source[0], key))
+            return 1
+        ids.add(int(key))
+    for key, material in materials.items():
+        referenced = [material.get("decay_into", 0), material.get("break_into", 0)]
+        for reaction in material.get("reactions", []):
+            referenced += [reaction.get("other", 0), reaction.get("into", 0), reaction.get("other_into", 0)]
+        for mat_id in referenced:
+            if mat_id != 0 and mat_id not in ids:
+                print_error("{}: material {} references unknown material {}".format(source[0], key, mat_id))
+                return 1
+
+    body = ",".join(str(b) for b in raw + b"\0")
+    with open(str(target[0]), "w") as f:
+        f.write('#include "default_materials.h"\n\n')
+        f.write("const char DEFAULT_MATERIALS_JSON[] = {{ {} }};\n".format(body))
+    return 0
+
+
+sources.append(env.Command(
+    "src/gen/default_materials.gen.cpp",
+    "data/default_materials.json",
+    Action(embed_default_materials, "Embedding default materials ..."),
+))
+
 # .dev doesn't inhibit compatibility, so we don't need to key it.
 # .universal just means "compatible with all relevant arches" so we don't need to key it.
 suffix = env['suffix'].replace(".dev", "").replace(".universal", "")

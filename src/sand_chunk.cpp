@@ -29,12 +29,22 @@ constexpr int NEIGHBOR_OFFSETS[8][2] = {
 // Products carry PARTICLE_FLAG_REACTED so they can't react again (and chain
 // across the grid in scan order) within the same tick. UPDATED is kept so a
 // particle that already moved this tick still can't move again.
-Particle reaction_product(Particle source, std::uint8_t into) {
-	if (into == 0)
-		return Particle();
-	source.mat_id = into;
-	source.flags |= ParticleFlags::PARTICLE_FLAG_REACTED;
-	return source;
+Particle reaction_product(const WorldGrid &world_grid, Particle source, std::uint8_t into) {
+	Particle product = world_grid.convert_particle(source, into);
+	if (product.mat_id != 0)
+		product.flags |= ParticleFlags::PARTICLE_FLAG_REACTED;
+	return product;
+}
+
+// The neighbor after a damaging reaction hits it: worn down by `damage`, or
+// broken into its material's break_into once the damage reaches its hp.
+Particle damaged_product(const WorldGrid &world_grid, Particle neighbor, std::uint8_t damage) {
+	if (damage < std::max<int>(neighbor.hp, 1)) {
+		neighbor.hp = static_cast<std::uint8_t>(neighbor.hp - damage);
+		neighbor.flags |= ParticleFlags::PARTICLE_FLAG_REACTED;
+		return neighbor;
+	}
+	return reaction_product(world_grid, neighbor, world_grid.get_material_registry().get(neighbor.mat_id).break_into);
 }
 } // namespace
 
@@ -213,9 +223,14 @@ void SandSimulationChunk::check_neighborhood_reactions(int x, int y, WorldGrid &
 	if (p.mat_id == 0 || (p.flags & ParticleFlags::PARTICLE_FLAG_REACTED))
 		return;
 
-	if (check_reaction_rules(x, y, world_grid, world_origin))
+	// A reaction that kept this cell's material (e.g. burning wood igniting
+	// a neighbor) must not pause its decay or lifetime.
+	const std::uint8_t mat_id = p.mat_id;
+	if (check_reaction_rules(x, y, world_grid, world_origin) && grid[get_index(x, y)].mat_id != mat_id)
 		return;
-	check_decay(x, y, world_grid, world_origin);
+	if (check_decay(x, y, world_grid, world_origin))
+		return;
+	check_hp_loss(x, y, world_grid, world_origin);
 }
 
 bool SandSimulationChunk::check_reaction_rules(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
@@ -245,10 +260,13 @@ bool SandSimulationChunk::check_reaction_rules(int x, int y, WorldGrid &world_gr
 
 			// Route through world_grid so both cells (and any neighboring
 			// chunk sharing a border) get marked dirty.
-			write_cell(x, y, reaction_product(self, rule.self_into), world_grid, world_origin);
+			write_cell(x, y, reaction_product(world_grid, self, rule.self_into), world_grid, world_origin);
 			world_grid.mark_particle_updated(self_position.x, self_position.y);
-			if (rule.other_into != neighbor.mat_id) {
-				write_cell(x + offset[0], y + offset[1], reaction_product(neighbor, rule.other_into), world_grid, world_origin);
+			if (rule.damage > 0) {
+				write_cell(x + offset[0], y + offset[1], damaged_product(world_grid, neighbor, rule.damage), world_grid, world_origin);
+				world_grid.mark_particle_updated(neighbor_position.x, neighbor_position.y);
+			} else if (rule.other_into != neighbor.mat_id) {
+				write_cell(x + offset[0], y + offset[1], reaction_product(world_grid, neighbor, rule.other_into), world_grid, world_origin);
 				world_grid.mark_particle_updated(neighbor_position.x, neighbor_position.y);
 			}
 			return true;
@@ -279,7 +297,32 @@ bool SandSimulationChunk::check_decay(int x, int y, WorldGrid &world_grid, Vecto
 	// configured byproduct, e.g. Fire -> Smoke. Route through world_grid so
 	// the cell (and any neighboring chunk sharing this border) wakes up.
 	const Vector2i position = world_origin + Vector2i(x, y);
-	write_cell(x, y, reaction_product(self, config.decay_into), world_grid, world_origin);
+	write_cell(x, y, reaction_product(world_grid, self, config.decay_into), world_grid, world_origin);
+	world_grid.mark_particle_updated(position.x, position.y);
+	return true;
+}
+
+bool SandSimulationChunk::check_hp_loss(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	Particle self = grid[get_index(x, y)];
+	const MaterialConfig &config = world_grid.get_material_registry().get(self.mat_id);
+	if (config.hp_loss_chance == 0)
+		return false;
+
+	if (world_grid.get_random().next_u8() >= config.hp_loss_chance) {
+		// Stay awake until the particle has worn out.
+		mark_dirty(x, y);
+		return false;
+	}
+
+	if (self.hp > 1) {
+		self.hp--;
+		write_cell(x, y, self, world_grid, world_origin);
+		return true;
+	}
+
+	// Worn out, e.g. burning wood crumbling into ash.
+	const Vector2i position = world_origin + Vector2i(x, y);
+	write_cell(x, y, reaction_product(world_grid, self, config.break_into), world_grid, world_origin);
 	world_grid.mark_particle_updated(position.x, position.y);
 	return true;
 }
