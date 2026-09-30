@@ -267,6 +267,67 @@ void test_same_seed_is_deterministic() {
 }
 } // namespace
 
+void test_empty_writes_do_not_allocate_and_idle_chunks_free() {
+	WorldGrid world;
+	configure_materials(world);
+	world.set_particle(500, 500, particle(0));
+	if (world.get_chunk_count() != 0) {
+		std::cerr << "erasing unallocated space must not allocate a chunk\n";
+		std::exit(EXIT_FAILURE);
+	}
+
+	world.set_particle(5, 5, particle(STONE));
+	world.set_particle(5, 5, particle(0));
+	for (int i = 0; i < 3; ++i) {
+		world.tick();
+	}
+	if (world.get_chunk_count() != 0) {
+		std::cerr << "asleep empty chunks must be freed\n";
+		std::exit(EXIT_FAILURE);
+	}
+
+	world.set_particle(5, 5, particle(STONE));
+	for (int i = 0; i < 3; ++i) {
+		world.tick();
+	}
+	if (world.get_chunk_count() != 1) {
+		std::cerr << "chunks holding particles must be kept\n";
+		std::exit(EXIT_FAILURE);
+	}
+}
+
+void test_snapshot_remaps_by_name() {
+	WorldGrid source;
+	MaterialRegistry &sm = source.get_material_registry();
+	sm.set({ 1, MatterState::SOLID_FIXED, Color(), 100, 0, 0, 0, "stone" });
+	sm.set({ 2, MatterState::SOLID_POWDER, Color(), 50, 0, 0, 0, "sand" });
+	source.set_particle(1, 1, particle(1));
+	source.set_particle(70, -3, particle(2));
+	std::vector<uint8_t> bytes = source.serialize();
+	if (bytes != source.serialize()) {
+		std::cerr << "identical worlds must serialize identically\n";
+		std::exit(EXIT_FAILURE);
+	}
+
+	WorldGrid swapped;
+	MaterialRegistry &wm = swapped.get_material_registry();
+	wm.set({ 1, MatterState::SOLID_POWDER, Color(), 50, 0, 0, 0, "sand" });
+	wm.set({ 2, MatterState::SOLID_FIXED, Color(), 100, 0, 0, 0, "stone" });
+	if (!swapped.deserialize(bytes)) {
+		std::cerr << "snapshot must load when names resolve\n";
+		std::exit(EXIT_FAILURE);
+	}
+	expect_material(swapped, 1, 1, 2, "stone must remap to its new id");
+	expect_material(swapped, 70, -3, 1, "sand must remap to its new id");
+
+	WorldGrid missing;
+	missing.get_material_registry().set({ 1, MatterState::SOLID_FIXED, Color(), 100, 0, 0, 0, "stone" });
+	if (missing.deserialize(bytes) || missing.get_last_error().empty()) {
+		std::cerr << "snapshot using an unknown material must fail with an error\n";
+		std::exit(EXIT_FAILURE);
+	}
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -279,5 +340,7 @@ int main() {
 	test_decay_does_not_stall();
 	test_reactions_do_not_chain_within_a_tick();
 	test_same_seed_is_deterministic();
+	test_empty_writes_do_not_allocate_and_idle_chunks_free();
+	test_snapshot_remaps_by_name();
 	return EXIT_SUCCESS;
 }

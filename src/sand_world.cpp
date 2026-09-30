@@ -58,11 +58,21 @@ void SandWorld::clear() {
 }
 
 PackedByteArray SandWorld::save_snapshot() const {
-	return world_grid.serialize();
+	const std::vector<uint8_t> bytes = world_grid.serialize();
+	PackedByteArray snapshot;
+	snapshot.resize(bytes.size());
+	if (!bytes.empty()) {
+		memcpy(snapshot.ptrw(), bytes.data(), bytes.size());
+	}
+	return snapshot;
 }
 
 bool SandWorld::load_snapshot(const PackedByteArray &snapshot) {
-	return world_grid.deserialize(snapshot);
+	const bool loaded = world_grid.deserialize(std::vector<uint8_t>(snapshot.ptr(), snapshot.ptr() + snapshot.size()));
+	if (!loaded) {
+		ERR_PRINT(String("Failed to load snapshot: ") + String::utf8(world_grid.get_last_error().c_str()));
+	}
+	return loaded;
 }
 
 void SandWorld::add_material(int id, const String &name, int state, Color color, int density, int dispersion, int decay_chance, int decay_into) {
@@ -77,7 +87,8 @@ void SandWorld::add_material(int id, const String &name, int state, Color color,
 			.density = (uint8_t)CLAMP(density, 0, 255),
 			.dispersion = (uint8_t)CLAMP(dispersion, 0, 255),
 			.decay_chance = (uint8_t)CLAMP(decay_chance, 0, 255),
-			.decay_into = (uint8_t)decay_into });
+			.decay_into = (uint8_t)decay_into,
+			.name = std::string(name.utf8().get_data()) });
 }
 
 void SandWorld::add_reaction(int material, int other, int material_into, int other_into, int chance) {
@@ -116,7 +127,7 @@ void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
 		int decay_chance = mat_dict.get("decay_chance", 0);
 		int decay_into = mat_dict.get("decay_into", 0);
 
-		add_material(mat_id, "", state, color, density, dispersion, decay_chance, decay_into);
+		add_material(mat_id, mat_dict.get("name", ""), state, color, density, dispersion, decay_chance, decay_into);
 
 		// A "reactions" array replaces this material's existing rules. Each
 		// entry: { other, chance, into = mat_id, other_into = other }.

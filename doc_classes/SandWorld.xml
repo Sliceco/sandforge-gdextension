@@ -89,7 +89,7 @@
 			<return type="bool" />
 			<param index="0" name="snapshot" type="PackedByteArray" />
 			<description>
-				Replace the world with a snapshot created by [method save_snapshot]. Returns [code]false[/code] when the data has an invalid or unsupported format; the existing world is left unchanged.
+				Replace the world with a snapshot created by [method save_snapshot]. Material IDs are remapped by the names given to [method add_material], so register the same named materials before loading. Returns [code]false[/code] (and prints the reason) when the data has an invalid or unsupported format, or uses a material name that is not registered; the existing world is left unchanged.
 			</description>
 		</method>
 		<method name="explosion">

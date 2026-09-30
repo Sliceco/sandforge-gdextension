@@ -1,11 +1,12 @@
 #pragma once
 
+#include <array>
 #include <functional>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
-#include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
 #include "material_registry.h"
 #include "sand_chunk.h"
@@ -43,16 +44,11 @@ public:
 		local_y = world_y & 63;
 	}
 
-	// Get a particle at world coordinates, creating chunks as needed.
-	// NOTE: mutating the returned reference bypasses dirty-rect tracking;
-	// prefer set_particle() so the change (and any affected neighbor
-	// chunk) is correctly marked for re-simulation.
-	Particle &get_particle(int world_x, int world_y);
-
 	// Get a particle at world coordinates, returns empty particle if chunk doesn't exist
 	Particle get_particle_readonly(int world_x, int world_y) const;
 
-	// Set a particle at world coordinates, creating chunks as needed
+	// Set a particle at world coordinates, creating chunks as needed. Writing
+	// an empty particle into an unallocated chunk is a no-op.
 	void set_particle(int world_x, int world_y, const Particle &p);
 
 	// Same as set_particle() for a cell already known to live in `chunk`
@@ -71,8 +67,13 @@ public:
 	void clear();
 
 	// Serialize and restore allocated chunks without exposing grid internals.
-	PackedByteArray serialize() const;
-	bool deserialize(const PackedByteArray &data);
+	// Snapshots carry an ID -> name table; on load, IDs are remapped by name
+	// and load fails (see get_last_error()) if a used material is unknown.
+	std::vector<uint8_t> serialize() const;
+	bool deserialize(const std::vector<uint8_t> &data);
+
+	// Why the last deserialize() failed; empty if it succeeded.
+	const std::string &get_last_error() const { return last_error; }
 
 	// Get the number of active chunks
 	int get_chunk_count() const { return chunks.size(); }
@@ -104,6 +105,7 @@ private:
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;
 	std::vector<Vector2i> updated_particles;
 	bool alternate_direction = false;
+	std::string last_error;
 	MaterialRegistry materials;
 	SimRandom random;
 };

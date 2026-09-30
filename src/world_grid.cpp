@@ -1,20 +1,22 @@
 #include "world_grid.h"
 
 #include <algorithm>
+#include <string>
+#include <unordered_map>
 
 namespace {
 constexpr uint8_t SNAPSHOT_MAGIC[] = { 'S', 'F', 'W', '1' };
-constexpr uint32_t SNAPSHOT_VERSION = 1;
+constexpr uint32_t SNAPSHOT_VERSION = 2;
 constexpr size_t SNAPSHOT_HEADER_SIZE = 12;
 constexpr size_t SNAPSHOT_CHUNK_SIZE = 8 + SandSimulationChunk::SIZE * SandSimulationChunk::SIZE * 2;
 
-void append_u32(PackedByteArray &data, uint32_t value) {
+void append_u32(std::vector<uint8_t> &data, uint32_t value) {
 	for (int shift = 0; shift < 32; shift += 8) {
-		data.append(static_cast<uint8_t>(value >> shift));
+		data.push_back(static_cast<uint8_t>(value >> shift));
 	}
 }
 
-uint32_t read_u32(const PackedByteArray &data, int offset) {
+uint32_t read_u32(const std::vector<uint8_t> &data, uint64_t offset) {
 	uint32_t value = 0;
 	for (int shift = 0; shift < 32; shift += 8) {
 		value |= static_cast<uint32_t>(data[offset++]) << shift;
@@ -52,15 +54,6 @@ SandSimulationChunk *WorldGrid::get_chunk(int chunk_x, int chunk_y) const {
 	return nullptr;
 }
 
-Particle &WorldGrid::get_particle(int world_x, int world_y) {
-	int chunk_x, chunk_y, local_x, local_y;
-	world_to_chunk(world_x, world_y, chunk_x, chunk_y);
-	world_to_local(world_x, world_y, local_x, local_y);
-
-	SandSimulationChunk *chunk = get_or_create_chunk(chunk_x, chunk_y);
-	return chunk->grid[chunk->get_index(local_x, local_y)];
-}
-
 Particle WorldGrid::get_particle_readonly(int world_x, int world_y) const {
 	int chunk_x, chunk_y, local_x, local_y;
 	world_to_chunk(world_x, world_y, chunk_x, chunk_y);
@@ -78,7 +71,12 @@ void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
 	world_to_chunk(world_x, world_y, chunk_x, chunk_y);
 	world_to_local(world_x, world_y, local_x, local_y);
 
-	set_particle_in_chunk(*get_or_create_chunk(chunk_x, chunk_y), chunk_x, chunk_y, local_x, local_y, p);
+	// Erasing unallocated space is a no-op; don't materialize an empty chunk.
+	SandSimulationChunk *chunk = p.mat_id == 0 ? get_chunk(chunk_x, chunk_y) : get_or_create_chunk(chunk_x, chunk_y);
+	if (chunk == nullptr) {
+		return;
+	}
+	set_particle_in_chunk(*chunk, chunk_x, chunk_y, local_x, local_y, p);
 }
 
 void WorldGrid::set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, int chunk_y, int local_x, int local_y, const Particle &p) {
@@ -157,16 +155,26 @@ void WorldGrid::tick() {
 	});
 
 	// New destination chunks are deferred to the following tick.
+	std::vector<Vector2i> ticked_positions;
 	for (const Vector2i &position : chunk_positions) {
 		SandSimulationChunk *chunk = get_chunk(position.x, position.y);
 		if (chunk != nullptr) {
+			if (chunk->is_active()) {
+				ticked_positions.push_back(position);
+			}
 			chunk->tick(alternate_direction, *this, position * SandSimulationChunk::SIZE);
 		}
 	}
 	alternate_direction = !alternate_direction;
 
-	// Optionally unload chunks that are far from activity
-	// For now, we'll keep them all in memory
+	// Free chunks that just went to sleep with nothing in them. Only chunks
+	// that were awake this tick are scanned, so idle chunks cost nothing.
+	for (const Vector2i &position : ticked_positions) {
+		auto it = chunks.find(position);
+		if (it != chunks.end() && !it->second->is_active() && it->second->is_empty()) {
+			chunks.erase(it);
+		}
+	}
 }
 
 void WorldGrid::clear() {
@@ -193,47 +201,130 @@ std::vector<WorldGrid::ChunkDebugInfo> WorldGrid::get_debug_chunk_info() const {
 	return info;
 }
 
-PackedByteArray WorldGrid::serialize() const {
-	PackedByteArray data;
+std::vector<uint8_t> WorldGrid::serialize() const {
+	std::vector<uint8_t> data;
 	for (uint8_t byte : SNAPSHOT_MAGIC) {
-		data.append(byte);
+		data.push_back(byte);
 	}
 	append_u32(data, SNAPSHOT_VERSION);
 	append_u32(data, static_cast<uint32_t>(chunks.size()));
 
-	for (const auto &[position, chunk] : chunks) {
+	// Material table: id -> name for every named material, so a load can
+	// remap IDs if the material setup changed since the save.
+	std::vector<const MaterialConfig *> named;
+	for (int id = 1; id < MaterialRegistry::MAX_MATERIALS; ++id) {
+		const MaterialConfig &config = materials.get(static_cast<uint8_t>(id));
+		if (!config.name.empty()) {
+			named.push_back(&config);
+		}
+	}
+	append_u32(data, static_cast<uint32_t>(named.size()));
+	for (const MaterialConfig *config : named) {
+		data.push_back(config->id);
+		append_u32(data, static_cast<uint32_t>(config->name.size()));
+		for (char c : config->name) {
+			data.push_back(static_cast<uint8_t>(c));
+		}
+	}
+
+	// Sorted so identical worlds produce identical bytes.
+	std::vector<Vector2i> positions;
+	positions.reserve(chunks.size());
+	for (const auto &[position, _] : chunks) {
+		positions.push_back(position);
+	}
+	std::sort(positions.begin(), positions.end(), [](const Vector2i &a, const Vector2i &b) {
+		return a.y != b.y ? a.y < b.y : a.x < b.x;
+	});
+
+	for (const Vector2i &position : positions) {
+		const SandSimulationChunk &chunk = *chunks.at(position);
 		append_u32(data, static_cast<uint32_t>(position.x));
 		append_u32(data, static_cast<uint32_t>(position.y));
-		for (const Particle &particle : chunk->grid) {
-			data.append(particle.mat_id);
-			data.append(particle.flags);
+		for (const Particle &particle : chunk.grid) {
+			data.push_back(particle.mat_id);
+			data.push_back(particle.flags);
 		}
 	}
 
 	return data;
 }
 
-bool WorldGrid::deserialize(const PackedByteArray &data) {
-	if (data.size() < static_cast<int>(SNAPSHOT_HEADER_SIZE)) {
+bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
+	last_error.clear();
+	auto fail = [this](const char *message) {
+		last_error = message;
 		return false;
+	};
+
+	const uint64_t size = data.size();
+	if (size < SNAPSHOT_HEADER_SIZE) {
+		return fail("Snapshot is too small.");
 	}
 	for (size_t i = 0; i < sizeof(SNAPSHOT_MAGIC); ++i) {
-		if (data[static_cast<int>(i)] != SNAPSHOT_MAGIC[i]) {
-			return false;
+		if (data[i] != SNAPSHOT_MAGIC[i]) {
+			return fail("Snapshot has an invalid header.");
 		}
 	}
 	if (read_u32(data, 4) != SNAPSHOT_VERSION) {
-		return false;
+		return fail("Unsupported snapshot version.");
 	}
 
 	const uint32_t chunk_count = read_u32(data, 8);
-	const uint64_t expected_size = SNAPSHOT_HEADER_SIZE + static_cast<uint64_t>(chunk_count) * SNAPSHOT_CHUNK_SIZE;
-	if (expected_size != static_cast<uint64_t>(data.size())) {
-		return false;
+	uint64_t offset = SNAPSHOT_HEADER_SIZE;
+
+	if (size - offset < 4) {
+		return fail("Snapshot is truncated.");
+	}
+	const uint32_t material_count = read_u32(data, offset);
+	offset += 4;
+
+	// Snapshot material ID -> current material ID, resolved by name.
+	std::array<int, MaterialRegistry::MAX_MATERIALS> remap;
+	remap.fill(-1);
+	remap[0] = 0;
+	std::array<bool, MaterialRegistry::MAX_MATERIALS> in_table{};
+	std::unordered_map<int, std::string> unresolved_names;
+	for (uint32_t i = 0; i < material_count; ++i) {
+		if (size - offset < 5) {
+			return fail("Snapshot is truncated.");
+		}
+		const uint8_t id = data[offset];
+		const uint32_t name_length = read_u32(data, offset + 1);
+		offset += 5;
+		if (id == 0 || in_table[id] || name_length > size - offset) {
+			return fail("Snapshot material table is corrupt.");
+		}
+		std::string name;
+		for (uint32_t c = 0; c < name_length; ++c) {
+			name.push_back(static_cast<char>(data[offset + c]));
+		}
+		offset += name_length;
+		in_table[id] = true;
+
+		// Prefer the same ID when it still has that name, else the lowest match.
+		if (materials.get(id).name == name) {
+			remap[id] = id;
+			continue;
+		}
+		for (int candidate = 1; candidate < MaterialRegistry::MAX_MATERIALS; ++candidate) {
+			if (materials.get(static_cast<uint8_t>(candidate)).name == name) {
+				remap[id] = candidate;
+				break;
+			}
+		}
+		if (remap[id] < 0) {
+			remap[id] = -2; // Only an error if a cell actually uses it.
+			unresolved_names[id] = name;
+		}
+	}
+
+	const uint64_t expected_size = offset + static_cast<uint64_t>(chunk_count) * SNAPSHOT_CHUNK_SIZE;
+	if (expected_size != size) {
+		return fail("Snapshot size does not match its header.");
 	}
 
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> restored_chunks;
-	int offset = SNAPSHOT_HEADER_SIZE;
 	for (uint32_t i = 0; i < chunk_count; ++i) {
 		const int chunk_x = static_cast<int32_t>(read_u32(data, offset));
 		offset += 4;
@@ -242,15 +333,23 @@ bool WorldGrid::deserialize(const PackedByteArray &data) {
 		auto chunk = std::make_unique<SandSimulationChunk>();
 		bool has_particles = false;
 		for (Particle &particle : chunk->grid) {
-			particle.mat_id = data[offset++];
-			particle.flags = data[offset++];
-			particle.flags &= ~ParticleFlags::PARTICLE_FLAGS_TRANSIENT;
+			const uint8_t stored_id = data[offset++];
+			particle.flags = data[offset++] & ~ParticleFlags::PARTICLE_FLAGS_TRANSIENT;
+			if (stored_id != 0 && !in_table[stored_id]) {
+				// Saved before this material had a name: nothing to remap by.
+				remap[stored_id] = stored_id;
+			}
+			if (remap[stored_id] == -2) {
+				last_error = "Snapshot uses material '" + unresolved_names[stored_id] + "' which is not registered in this world.";
+				return false;
+			}
+			particle.mat_id = static_cast<uint8_t>(remap[stored_id]);
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {
 			const auto [_, inserted] = restored_chunks.emplace(Vector2i(chunk_x, chunk_y), std::move(chunk));
 			if (!inserted) {
-				return false;
+				return fail("Snapshot contains duplicate chunks.");
 			}
 		}
 	}

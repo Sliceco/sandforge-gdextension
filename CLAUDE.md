@@ -31,10 +31,11 @@ Three layers, only the top one is a Godot class:
 
 Invariants that are easy to break:
 
-- All particle mutations must go through `WorldGrid::set_particle()`, never `chunk->grid[]` or the mutable `get_particle()` reference. `set_particle` marks the dirty rect and wakes the mirrored cell in an existing neighbor chunk for border edits; bypassing it leaves neighbors asleep.
+- All particle mutations must go through `WorldGrid::set_particle()`, never `chunk->grid[]` (there is no mutable `get_particle()`). `set_particle` marks the dirty rect and wakes the mirrored cell in an existing neighbor chunk for border edits; bypassing it leaves neighbors asleep.
 - Moved particles carry a transient `UPDATED` flag so they move at most once per tick, including across chunk boundaries; reaction products carry `REACTED` so reactions spread at most one cell per tick. `mark_particle_updated()` records any cell holding transient flags (including a particle displaced by a swap) and `WorldGrid::tick()` clears them first; an unrecorded flag freezes that particle forever.
 - A chance-based reaction or decay that loses its roll must `mark_dirty()` its cell, or it stalls once the chunk sleeps.
-- `get_particle_readonly()` never allocates chunks; writes do.
+- `get_particle_readonly()` never allocates chunks; writes do, except writing an empty particle into a missing chunk (no-op). `tick()` frees chunks that went to sleep with no particles.
+- Snapshots (`SNAPSHOT_VERSION` 2) store an ID → name table and remap by name on load; `add_material`'s `name` must be stable for that to work.
 - Each `WorldGrid` owns its `MaterialRegistry` (materials + reaction rules) and `SimRandom`. All simulation randomness must come from `world_grid.get_random()`, never `rand()`, so a seed reproduces a run.
 
 ## Conventions
