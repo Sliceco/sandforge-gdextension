@@ -17,6 +17,8 @@ clang-format --dry-run --Werror src/sand_world.cpp   # style check (not enforced
 
 CMake alternative: `cmake -S . -B build && cmake --build build`, tests via `ctest --test-dir build`.
 
+CI (`.github/workflows/ci.yml`) only builds the extension across platforms; it does not run `scons test` or clang-format, so run both locally.
+
 The test binary has no filter: `main()` runs every `test_*` function in sequence; a failed check prints a message and exits with `EXIT_FAILURE`. To run a single test, temporarily comment out the others in `main()`; after `scons test` the binary can be re-run directly as `build/tests/world_grid_tests`. Tests link only `sand_chunk.cpp` + `world_grid.cpp`, so anything they need must not depend on `SandWorld`.
 
 Manual verification: open `project/project.godot` in Godot and run `sand_sandbox.tscn` (paint brushes, pause/step, chunk/dirty-rect debug overlay).
@@ -25,7 +27,7 @@ Manual verification: open `project/project.godot` in Godot and run `sand_sandbox
 
 Three layers, only the top one is a Godot class:
 
-- **`SandWorld`** (`src/sand_world.*`) — `RefCounted` GDCLASS exposed to GDScript; registered in `register_types.cpp`. Brushes, explosions, material registration (a new world starts with the defaults from `data/default_materials.json`, which the first user-registered material replaces), snapshot save/load, and `render_to_texture()` (RGBA8888 `PackedByteArray` that GDScript wraps in an `Image`). Delegates everything to a `WorldGrid`.
+- **`SandWorld`** (`src/sand_world.*`) — `RefCounted` GDCLASS exposed to GDScript; registered in `register_types.cpp`. Brushes, explosions, material registration (a new world starts with the defaults from `data/default_materials.json`; the first `add_material`/`set_materials_from_dict` call clears them, but calling `add_reaction` first keeps them and builds on top), snapshot save/load, and `render_to_texture()` (RGBA8888 `PackedByteArray` that GDScript wraps in an `Image`). Delegates everything to a `WorldGrid`.
 - **`WorldGrid`** (`src/world_grid.*`) — sparse `unordered_map<Vector2i, SandSimulationChunk>`; world→chunk via `>> 6` / `& 63` (64-cell chunks, negative coords work). `tick()` sorts chunks bottom row first, with horizontal order following `alternate_direction`, so falls cascade across chunk seams within one tick — don't replace this with map iteration order. Destination chunks created mid-tick are simulated starting next tick.
 - **`SandSimulationChunk`** (`src/sand_chunk.*`) — 64x64 `Particle` array plus `dirty_rect`. A tick snapshots/clears the rect, scans bottom-to-top with alternating horizontal direction, then evaluates reactions in the same region. Empty `dirty_rect` = asleep, skipped. Movement across chunk edges goes through `WorldGrid`.
 
