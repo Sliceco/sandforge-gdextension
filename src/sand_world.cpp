@@ -99,16 +99,15 @@ bool SandWorld::make_material_config(int id, const String &name, int state, Colo
 	ERR_FAIL_COND_V_MSG(state < (int)MatterState::EMPTY || state > (int)MatterState::GAS, false, "Material state must be in 0..4.");
 	ERR_FAIL_COND_V_MSG(decay_into < 0 || decay_into > 255, false, "decay_into must be a material id in 0..255.");
 
-	config = MaterialConfig{
-		.id = (uint8_t)id,
-		.state = (MatterState)state,
-		.color = color,
-		.density = (uint8_t)CLAMP(density, 0, 255),
-		.dispersion = (uint8_t)CLAMP(dispersion, 0, 255),
-		.decay_chance = (uint8_t)CLAMP(decay_chance, 0, 255),
-		.decay_into = (uint8_t)decay_into,
-		.name = std::string(name.utf8().get_data())
-	};
+	config = MaterialConfig();
+	config.id = (uint8_t)id;
+	config.state = (MatterState)state;
+	config.color = color;
+	config.density = (uint8_t)CLAMP(density, 0, 255);
+	config.dispersion = (uint8_t)CLAMP(dispersion, 0, 255);
+	config.decay_chance = (uint8_t)CLAMP(decay_chance, 0, 255);
+	config.decay_into = (uint8_t)decay_into;
+	config.name = std::string(name.utf8().get_data());
 	return true;
 }
 
@@ -133,7 +132,13 @@ void SandWorld::add_reaction_rule(int material, int other, int material_into, in
 	ERR_FAIL_COND_MSG(chance < 1 || chance > 255, "Reaction chance must be in 1..255.");
 	ERR_FAIL_COND_MSG(damage < 0 || damage > 255, "Reaction damage must be in 0..255.");
 
-	world_grid.get_material_registry().add_reaction((uint8_t)material, ReactionRule{ .other = (uint8_t)other, .self_into = (uint8_t)material_into, .other_into = (uint8_t)other_into, .chance = (uint8_t)chance, .damage = (uint8_t)damage });
+	ReactionRule rule;
+	rule.other = (uint8_t)other;
+	rule.self_into = (uint8_t)material_into;
+	rule.other_into = (uint8_t)other_into;
+	rule.chance = (uint8_t)chance;
+	rule.damage = (uint8_t)damage;
+	world_grid.get_material_registry().add_reaction((uint8_t)material, rule);
 }
 
 void SandWorld::clear_reactions() {
