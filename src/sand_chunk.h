@@ -10,6 +10,7 @@
 using namespace godot;
 
 class WorldGrid;
+class SimRandom;
 
 // Axis-aligned inclusive bounding box of chunk-local cells that require
 // simulation. An empty rect means nothing changed since the last tick and
@@ -81,13 +82,22 @@ private:
 	void write_cell(int x, int y, const Particle &p, WorldGrid &world_grid, Vector2i world_origin);
 
 	bool update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// Gravity, momentum and friction for powders and liquids: updates the
+	// particle's velocity and moves it along it, stopping at obstacles.
+	// Returns true if it moved; a particle that didn't move then gets the
+	// usual diagonal slide and dispersion.
+	bool update_motion(int x, int y, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin);
+	// Velocity after hitting the ground: no vertical speed, and part of a
+	// hard landing turned sideways.
+	void land(int &vx, int &vy, const MaterialConfig &config, SimRandom &random) const;
 	// invert_density flips the "denser wins" swap rule so buoyant gases can
 	// rise past heavier fluids instead of sinking past lighter ones.
 	// A sideways move sets the mover's flow direction, and with may_settle
 	// (it turned around with nowhere lower to go) counts toward its rest
 	// counter; any other move resets the rest counter, and that of a
-	// particle it displaces.
-	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false, bool sideways = false, bool may_settle = false);
+	// particle it displaces. `moving`, if given, is the source particle
+	// with updated velocity to place instead of the one in the grid.
+	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false, bool sideways = false, bool may_settle = false, const Particle *moving = nullptr);
 	// Distance along dir, through empty cells, to the nearest cell the
 	// fluid could fall (or rise) out of, or 0 if none is within a few
 	// dispersions.

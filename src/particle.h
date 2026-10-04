@@ -28,6 +28,13 @@ struct Particle {
 	// Random per-particle value fixed at creation; scales the material's
 	// color_variation when rendering so grains keep their shade as they move.
 	std::uint8_t shade = 128;
+	// Velocity in 1/VELOCITY_SCALE cells per tick (+y is down). Powders and
+	// liquids accelerate under gravity and keep sideways momentum; at rest
+	// both are 0.
+	std::int8_t vx = 0;
+	std::int8_t vy = 0;
+
+	static constexpr int VELOCITY_SCALE = 16;
 
 	// Fluids keep sliding sideways in their flow direction until blocked,
 	// then turn around. The rest counter counts those turnarounds since the

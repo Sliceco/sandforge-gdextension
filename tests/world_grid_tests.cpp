@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -39,6 +40,11 @@ void configure_materials(WorldGrid &world) {
 	materials.set({ EMBER, MatterState::SOLID_FIXED, Color(), 100, 0 });
 	materials.set({ BRICK, MatterState::SOLID_FIXED, Color(), 100, 0 });
 	materials.set({ SMOKE, MatterState::GAS, Color(), 1, 3, 2, 0 });
+	for (int material : { SAND, WATER, ACID }) {
+		MaterialConfig config = materials.get(material);
+		config.friction = material == SAND ? 64 : 16;
+		materials.set(config);
+	}
 }
 
 void fail(const char *message) {
@@ -551,6 +557,159 @@ void test_snapshot_remaps_by_name() {
 	}
 }
 
+int find_material_in_column(const WorldGrid &world, int x, int min_y, int max_y, int material) {
+	for (int y = min_y; y <= max_y; ++y) {
+		if (world.get_particle_readonly(x, y).mat_id == material)
+			return y;
+	}
+	return -1;
+}
+
+void test_gravity_accelerates_falls() {
+	WorldGrid world;
+	configure_materials(world);
+	for (int x = -50; x <= 50; ++x) {
+		world.set_particle(x, 300, particle(STONE));
+	}
+	world.set_particle(0, 0, particle(SAND));
+	for (int tick = 0; tick < 40; ++tick) {
+		world.tick();
+	}
+	const int y = find_material_in_column(world, 0, 0, 299, SAND);
+	// 1 cell per tick without velocity; accelerating at 0.25 cells/tick^2
+	// to the 6 cells/tick cap covers well over that.
+	if (y <= 100)
+		fail("falling sand must accelerate beyond 1 cell per tick");
+	if (y > 40 * 6)
+		fail("falling sand must not exceed the maximum fall speed");
+
+	for (int tick = 0; tick < 100; ++tick) {
+		world.tick();
+	}
+	// A hard landing may scatter it a little sideways.
+	if (count_material(world, -50, 299, 50, 299, SAND) != 1)
+		fail("accelerated sand must stop on the floor, not pass through it");
+	Particle landed;
+	for (int x = -50; x <= 50; ++x) {
+		if (world.get_particle_readonly(x, 299).mat_id == SAND)
+			landed = world.get_particle_readonly(x, 299);
+	}
+	if (landed.vx != 0 || landed.vy != 0)
+		fail("landed sand must come to rest");
+	if (any_chunk_active(world))
+		fail("resting sand must let its chunk sleep");
+}
+
+void test_max_fall_speed_limits_falls() {
+	WorldGrid world;
+	configure_materials(world);
+	world.set_max_fall_speed(2 * Particle::VELOCITY_SCALE);
+	world.set_particle(0, 0, particle(SAND));
+	for (int tick = 0; tick < 50; ++tick) {
+		world.tick();
+	}
+	const int y = find_material_in_column(world, 0, 0, 200, SAND);
+	if (y < 60 || y > 100)
+		fail("fall speed must level off at max_fall_speed");
+}
+
+void test_impulse_throws_and_friction_stops() {
+	WorldGrid world;
+	configure_materials(world);
+	for (int x = -5; x <= 200; ++x) {
+		world.set_particle(x, 50, particle(STONE));
+	}
+	world.set_particle(10, 49, particle(SAND));
+	world.tick();
+	// Push from the left: up and to the right.
+	world.apply_impulse(8, 50, 4, 5 * Particle::VELOCITY_SCALE);
+	const Particle thrown = world.get_particle_readonly(10, 49);
+	if (thrown.vx <= 0 || thrown.vy >= 0)
+		fail("an impulse must push particles away from its center");
+
+	if (tick_until_asleep(world, 500) < 0)
+		fail("thrown sand must come to rest");
+	const int landed_x = [&] {
+		for (int x = 0; x <= 200; ++x) {
+			if (world.get_particle_readonly(x, 49).mat_id == SAND)
+				return x;
+		}
+		return -1;
+	}();
+	if (landed_x <= 12)
+		fail("thrown sand must travel sideways");
+}
+
+void test_fast_particles_do_not_tunnel() {
+	WorldGrid world;
+	configure_materials(world);
+	for (int y = 0; y <= 20; ++y) {
+		world.set_particle(-1, y, particle(STONE));
+		world.set_particle(20, y, particle(STONE));
+	}
+	for (int x = -1; x <= 20; ++x) {
+		world.set_particle(x, 21, particle(STONE));
+	}
+	world.set_particle(17, 20, particle(WATER));
+	world.set_particle_velocity(17, 20, 127, 0);
+	for (int tick = 0; tick < 50; ++tick) {
+		world.tick();
+	}
+	if (count_material(world, 0, 0, 19, 20, WATER) != 1)
+		fail("a fast particle must stop at a 1-cell wall, not jump it");
+}
+
+void test_hard_landing_splashes_liquid() {
+	WorldGrid world;
+	configure_materials(world);
+	for (int x = -40; x <= 40; ++x) {
+		world.set_particle(x, 200, particle(STONE));
+	}
+	world.set_particle(0, 0, particle(WATER));
+	int max_vx = 0;
+	for (int tick = 0; tick < 100; ++tick) {
+		world.tick();
+		for (int x = -40; x <= 40; ++x) {
+			max_vx = std::max(max_vx, std::abs(static_cast<int>(world.get_particle_readonly(x, 199).vx)));
+		}
+	}
+	if (max_vx == 0)
+		fail("liquid landing hard must splash sideways");
+}
+
+void test_snapshot_keeps_velocity_and_loads_version_3() {
+	WorldGrid source;
+	configure_materials(source);
+	source.set_particle(3, 3, particle(SAND));
+	source.set_particle_velocity(3, 3, 20, -30);
+	WorldGrid loaded;
+	configure_materials(loaded);
+	if (!loaded.deserialize(source.serialize()))
+		fail("snapshot must load");
+	const Particle p = loaded.get_particle_readonly(3, 3);
+	if (p.vx != 20 || p.vy != -30)
+		fail("snapshots must keep particle velocity");
+
+	// Rewrite as a version 3 snapshot: 4 bytes per cell, no velocity.
+	std::vector<uint8_t> v4 = source.serialize();
+	const size_t cells = SandSimulationChunk::SIZE * SandSimulationChunk::SIZE;
+	const size_t chunk_start = v4.size() - (8 + cells * 6);
+	std::vector<uint8_t> v3(v4.begin(), v4.begin() + chunk_start + 8);
+	v3[4] = 3;
+	for (size_t i = 0; i < cells; ++i) {
+		for (size_t b = 0; b < 4; ++b) {
+			v3.push_back(v4[chunk_start + 8 + i * 6 + b]);
+		}
+	}
+	WorldGrid old_loaded;
+	configure_materials(old_loaded);
+	if (!old_loaded.deserialize(v3))
+		fail("version 3 snapshots must still load");
+	const Particle old_p = old_loaded.get_particle_readonly(3, 3);
+	if (old_p.mat_id != SAND || old_p.vx != 0 || old_p.vy != 0)
+		fail("version 3 particles must load at rest");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -573,5 +732,11 @@ int main() {
 	test_still_pool_settles_and_sleeps();
 	test_settled_pool_flows_into_an_opened_gap();
 	test_settling_is_reset_by_falling();
+	test_gravity_accelerates_falls();
+	test_max_fall_speed_limits_falls();
+	test_impulse_throws_and_friction_stops();
+	test_fast_particles_do_not_tunnel();
+	test_hard_landing_splashes_liquid();
+	test_snapshot_keeps_velocity_and_loads_version_3();
 	return EXIT_SUCCESS;
 }

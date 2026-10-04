@@ -9,7 +9,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 ### Core Components
 
 1. **Particle** (`particle.h`)
-   - 4-byte structure: `mat_id` (material), `flags`, `hp` (remaining durability/lifetime) and `shade` (random per-particle color offset fixed at creation)
+   - 6-byte structure: `mat_id` (material), `flags`, `hp` (remaining durability/lifetime), `shade` (random per-particle color offset fixed at creation) and velocity `vx`, `vy` (int8, in 1/16 cells per tick)
    - Flags: `PARTICLE_FLAG_UPDATED` (moved this tick), `PARTICLE_FLAG_REACTED` (produced by a reaction this tick); both are transient and cleared before the next tick
 
 2. **MaterialConfig** (`materialconfig.h`)
@@ -48,13 +48,20 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 
 ### Movement Rules
 
+**Velocity** (powders and liquids): each particle carries a velocity in 1/16 cells per tick.
+- Unsupported particles gain `gravity` per tick (default 0.25 cells/tick²) up to `max_fall_speed` (default 6 cells/tick), and always fall at least 1 cell per tick. A particle falling onto another falling particle follows it instead of landing.
+- Each tick a particle moves along its velocity one cell at a time and stops before the first obstacle, so fast particles never tunnel. Entering a lighter fluid swaps with it and loses most of its speed to drag. Fractional speeds advance with the world tick count, so particles at the same speed move in lockstep and a falling column stays together.
+- Landing at 2 cells/tick or faster turns part of the fall into sideways speed (half for liquids, about a fifth for powders), so sand scatters and liquid splashes. Hitting a wall stops sideways motion; there is no bounce.
+- While resting on something, a particle loses `friction`/256 of its sideways speed per tick.
+- `apply_impulse()` (and explosions) push particles outward; a particle that didn't move by velocity falls back to the slide and dispersion rules below.
+
 **SOLID_POWDER** (sand, gunpowder):
-1. Try move straight down
+1. Move by velocity (falling straight down when unsupported)
 2. Try diagonal down-left/down-right (random)
 3. Stop if blocked
 
 **LIQUID** (water, acid, oil):
-1. Try move straight down
+1. Move by velocity (falling straight down when unsupported)
 2. Try diagonal down-left/down-right
 3. Horizontal dispersion: slide through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls). A liquid keeps sliding in its current flow direction and turns around only when blocked
 4. Settling: a liquid that has turned around 3 times since it last fell, each time with no cell it could fall into within `dispersion * 8` cells on either side, is *settled*. It is resting on a level surface, and would otherwise slide back and forth forever and keep its chunk awake. A settled liquid only slides toward a cell it can fall into; otherwise it stays put so the chunk can sleep. Falling, or being pushed by a falling particle, unsettles it

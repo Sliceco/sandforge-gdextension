@@ -4,13 +4,13 @@
 		"max_hp": 120, "break_into": 10
 	},
 	"2": {
-		"name": "Sand", "state": 2, "color": "#e6d899", "density": 50, "color_variation": 14
+		"name": "Sand", "state": 2, "color": "#e6d899", "density": 50, "color_variation": 14, "friction": 64
 	},
 	"3": {
-		"name": "Water", "state": 3, "color": "#3366cc", "density": 30, "dispersion": 4, "color_variation": 4
+		"name": "Water", "state": 3, "color": "#3366cc", "density": 30, "dispersion": 4, "color_variation": 4, "friction": 16
 	},
 	"4": {
-		"name": "Acid", "state": 3, "color": "#78d83d", "density": 45, "dispersion": 3, "color_variation": 6,
+		"name": "Acid", "state": 3, "color": "#78d83d", "density": 45, "dispersion": 3, "color_variation": 6, "friction": 16,
 		"reactions": [
 			{ "other": 1, "chance": 60, "damage": 30, "into": 0 },
 			{ "other": 2, "chance": 80, "other_into": 0 },
@@ -48,17 +48,17 @@
 		]
 	},
 	"9": {
-		"name": "Ash", "state": 2, "color": "#4a4a4a", "density": 20, "color_variation": 10
+		"name": "Ash", "state": 2, "color": "#4a4a4a", "density": 20, "color_variation": 10, "friction": 96
 	},
 	"10": {
-		"name": "Gravel", "state": 2, "color": "#6b6b6b", "density": 70, "color_variation": 18
+		"name": "Gravel", "state": 2, "color": "#6b6b6b", "density": 70, "color_variation": 18, "friction": 48
 	},
 	"11": {
 		"name": "Steam", "state": 4, "color": "#d6e4f0aa", "density": 2, "dispersion": 3, "color_variation": 8,
 		"decay_chance": 3, "decay_into": 3
 	},
 	"12": {
-		"name": "Oil", "state": 3, "color": "#3b2f1e", "density": 20, "dispersion": 4, "color_variation": 4,
+		"name": "Oil", "state": 3, "color": "#3b2f1e", "density": 20, "dispersion": 4, "color_variation": 4, "friction": 24,
 		"reactions": [
 			{ "other": 5, "chance": 120, "into": 5 },
 			{ "other": 8, "chance": 60, "into": 5 },
@@ -66,7 +66,7 @@
 		]
 	},
 	"13": {
-		"name": "Lava", "state": 3, "color": "#ff4500", "density": 90, "dispersion": 1, "color_variation": 24,
+		"name": "Lava", "state": 3, "color": "#ff4500", "density": 90, "dispersion": 1, "color_variation": 24, "friction": 96,
 		"reactions": [
 			{ "other": 3, "chance": 150, "into": 1, "other_into": 11 }
 		]
