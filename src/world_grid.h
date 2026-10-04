@@ -60,7 +60,8 @@ public:
 	Particle make_particle(std::uint8_t mat_id);
 
 	// `source` turned into `into`: full hp for the new material, keeping its
-	// shade and flags. Converting into its own material keeps its hp.
+	// shade and flags; a changed material starts with fresh flow state.
+	// Converting into its own material keeps its hp.
 	// Returns an empty particle when `into` is 0.
 	Particle convert_particle(Particle source, std::uint8_t into) const;
 

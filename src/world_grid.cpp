@@ -127,6 +127,9 @@ Particle WorldGrid::convert_particle(Particle source, uint8_t into) const {
 	if (into != source.mat_id) {
 		source.mat_id = into;
 		source.hp = materials.get(into).max_hp;
+		// A new material starts unsettled (e.g. steam condensing to water).
+		source.set_rest(0);
+		source.set_following(false);
 	}
 	return source;
 }

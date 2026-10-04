@@ -56,7 +56,11 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 **LIQUID** (water, acid, oil):
 1. Try move straight down
 2. Try diagonal down-left/down-right
-3. Horizontal dispersion: slide left/right through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls)
+3. Horizontal dispersion: slide through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls). A liquid keeps sliding in its current flow direction and turns around only when blocked
+4. Settling: a liquid that has turned around 3 times since it last fell, each time with no cell it could fall into within `dispersion * 8` cells on either side, is *settled*. It is resting on a level surface, and would otherwise slide back and forth forever and keep its chunk awake. A settled liquid only slides toward a cell it can fall into; otherwise it stays put so the chunk can sleep. Falling, or being pushed by a falling particle, unsettles it
+5. Draining: when settled liquid starts to fall or flows toward a drop, the nearest settled liquid behind it on the same row *follows* it in that direction until blocked, so a whole resting layer drains through an opening rather than only the part close enough to see it
+
+Settling never removes particles, so liquid mass is conserved. A settled surface is level to within a cell or two (a partial top layer can stay in a short step), and the flow state lives in persistent `Particle::flags` bits, so it survives snapshots.
 
 **SOLID_FIXED** (stone, brick):
 - No movement
@@ -64,7 +68,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 **GAS** (smoke, fire, steam):
 1. Try moving up (mirrors powder/liquid falling, but rises)
 2. Try diagonal up-left/up-right
-3. Horizontal dispersion: slide left/right through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls)
+3. Horizontal dispersion and settling as for liquids, mirrored: a gas settles against a ceiling and drains upward through openings
 4. Density comparisons are inverted vs. SOLID_POWDER/LIQUID: lower density rises past a denser gas/fluid above it
 
 ### Chemical Reactions

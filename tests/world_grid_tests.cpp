@@ -41,6 +41,122 @@ void configure_materials(WorldGrid &world) {
 	materials.set({ SMOKE, MatterState::GAS, Color(), 1, 3, 2, 0 });
 }
 
+void fail(const char *message) {
+	std::cerr << message << '\n';
+	std::exit(EXIT_FAILURE);
+}
+
+bool any_chunk_active(const WorldGrid &world) {
+	for (const WorldGrid::ChunkDebugInfo &info : world.get_debug_chunk_info()) {
+		if (info.has_dirty_rect)
+			return true;
+	}
+	return false;
+}
+
+int count_material(const WorldGrid &world, int min_x, int min_y, int max_x, int max_y, int material) {
+	int count = 0;
+	for (int y = min_y; y <= max_y; ++y) {
+		for (int x = min_x; x <= max_x; ++x) {
+			count += world.get_particle_readonly(x, y).mat_id == material;
+		}
+	}
+	return count;
+}
+
+// Stone basin with walls at x = 0 and x = width + 1 and a floor at y = 40;
+// water fills the bottom rows and leaves a partial top row, the layout that
+// used to slide back and forth forever.
+void build_partly_filled_basin(WorldGrid &world, int width, int full_rows, int extra) {
+	for (int x = 0; x <= width + 1; ++x) {
+		world.set_particle(x, 40, particle(STONE));
+	}
+	for (int y = 20; y < 40; ++y) {
+		world.set_particle(0, y, particle(STONE));
+		world.set_particle(width + 1, y, particle(STONE));
+	}
+	for (int y = 40 - full_rows; y < 40; ++y) {
+		for (int x = 1; x <= width; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	for (int i = 0; i < extra; ++i) {
+		world.set_particle(1 + i * 3, 39 - full_rows, particle(WATER));
+	}
+}
+
+int tick_until_asleep(WorldGrid &world, int max_ticks) {
+	for (int tick = 1; tick <= max_ticks; ++tick) {
+		world.tick();
+		if (!any_chunk_active(world))
+			return tick;
+	}
+	return -1;
+}
+
+void test_still_pool_settles_and_sleeps() {
+	WorldGrid world;
+	configure_materials(world);
+	build_partly_filled_basin(world, 100, 3, 20);
+	const int water = count_material(world, 1, 20, 100, 39, WATER);
+
+	if (tick_until_asleep(world, 2000) < 0)
+		fail("a pool with a partial top row must settle and let its chunks sleep");
+	if (count_material(world, 1, 20, 100, 39, WATER) != water)
+		fail("settling must not create or destroy water");
+	// The partial row stays on top of the full ones: nothing piles up.
+	if (count_material(world, 1, 20, 100, 35, WATER) != 0)
+		fail("settled water must stay level");
+}
+
+void test_settled_pool_flows_into_an_opened_gap() {
+	WorldGrid world;
+	configure_materials(world);
+	build_partly_filled_basin(world, 60, 3, 10);
+	// An empty lower basin under and to the right of the pool.
+	for (int x = 0; x <= 91; ++x) {
+		world.set_particle(x, 45, particle(STONE));
+	}
+	for (int y = 30; y < 45; ++y) {
+		world.set_particle(0, y, particle(STONE));
+		world.set_particle(91, y, particle(STONE));
+	}
+	if (tick_until_asleep(world, 2000) < 0)
+		fail("pool must settle before the wall is opened");
+
+	// Breach the wall at the top of the pool, far from most of the water.
+	world.set_particle(61, 36, particle(0));
+	world.set_particle(61, 37, particle(0));
+	if (tick_until_asleep(world, 4000) < 0)
+		fail("drained pool must settle again");
+	// The breach exposes the top full row and the partial row above it.
+	if (count_material(world, 1, 41, 90, 44, WATER) < 60)
+		fail("settled water must flow out through a newly opened gap");
+}
+
+void test_settling_is_reset_by_falling() {
+	WorldGrid world;
+	configure_materials(world);
+	build_partly_filled_basin(world, 30, 2, 5);
+	if (tick_until_asleep(world, 2000) < 0)
+		fail("pool must settle");
+	// Drain the basin through its floor: every particle has to fall again.
+	for (int x = 1; x <= 30; ++x) {
+		world.set_particle(x, 40, particle(0));
+	}
+	for (int x = -10; x <= 50; ++x) {
+		world.set_particle(x, 60, particle(STONE));
+	}
+	for (int y = 41; y < 60; ++y) {
+		world.set_particle(-10, y, particle(STONE));
+		world.set_particle(50, y, particle(STONE));
+	}
+	if (tick_until_asleep(world, 4000) < 0)
+		fail("drained water must settle again");
+	if (count_material(world, 1, 20, 30, 39, WATER) != 0)
+		fail("settled water must still fall when its floor is removed");
+}
+
 void test_vertical_crossing_updates_once() {
 	WorldGrid world;
 	configure_materials(world);
@@ -454,5 +570,8 @@ int main() {
 	test_damage_particle_absorbs_and_breaks();
 	test_reaction_damage_erodes_neighbor();
 	test_snapshot_keeps_hp_and_shade();
+	test_still_pool_settles_and_sleeps();
+	test_settled_pool_flows_into_an_opened_gap();
+	test_settling_is_reset_by_falling();
 	return EXIT_SUCCESS;
 }
