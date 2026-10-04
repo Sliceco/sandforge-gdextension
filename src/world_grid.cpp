@@ -1,14 +1,25 @@
 #include "world_grid.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 
 namespace {
 constexpr uint8_t SNAPSHOT_MAGIC[] = { 'S', 'F', 'W', '1' };
-constexpr uint32_t SNAPSHOT_VERSION = 3;
+// Version 4 added per-particle velocity (6 bytes per cell); version 3
+// snapshots (4 bytes per cell) still load, with everything at rest.
+constexpr uint32_t SNAPSHOT_VERSION = 4;
+constexpr uint32_t SNAPSHOT_OLDEST_VERSION = 3;
 constexpr size_t SNAPSHOT_HEADER_SIZE = 12;
-constexpr size_t SNAPSHOT_CHUNK_SIZE = 8 + SandSimulationChunk::SIZE * SandSimulationChunk::SIZE * 4;
+
+size_t snapshot_cell_size(uint32_t version) {
+	return version >= 4 ? 6 : 4;
+}
+
+size_t snapshot_chunk_size(uint32_t version) {
+	return 8 + SandSimulationChunk::SIZE * SandSimulationChunk::SIZE * snapshot_cell_size(version);
+}
 
 void append_u32(std::vector<uint8_t> &data, uint32_t value) {
 	for (int shift = 0; shift < 32; shift += 8) {
@@ -107,6 +118,50 @@ void WorldGrid::set_particle_in_chunk(SandSimulationChunk &chunk, int chunk_x, i
 	}
 }
 
+namespace {
+std::int8_t clamp_velocity(int value) {
+	return static_cast<std::int8_t>(std::clamp(value, -127, 127));
+}
+} // namespace
+
+void WorldGrid::apply_impulse(int center_x, int center_y, int radius, int strength) {
+	if (radius < 0 || strength == 0)
+		return;
+	const int r2 = radius * radius;
+	for (int dy = -radius; dy <= radius; ++dy) {
+		for (int dx = -radius; dx <= radius; ++dx) {
+			const int d2 = dx * dx + dy * dy;
+			if (d2 > r2)
+				continue;
+			Particle p = get_particle_readonly(center_x + dx, center_y + dy);
+			const MatterState state = materials.get(p.mat_id).state;
+			if (state != MatterState::SOLID_POWDER && state != MatterState::LIQUID)
+				continue;
+			const float distance = std::sqrt(static_cast<float>(d2));
+			const float push = strength * (1.0f - distance / static_cast<float>(radius + 1));
+			const float dir_x = d2 == 0 ? 0.0f : dx / distance;
+			const float dir_y = d2 == 0 ? -1.0f : dy / distance;
+			p.vx = clamp_velocity(p.vx + static_cast<int>(std::lround(push * dir_x)));
+			p.vy = clamp_velocity(p.vy + static_cast<int>(std::lround(push * dir_y)));
+			// Thrown fluid must be free to flow again once it lands.
+			p.set_rest(0);
+			p.set_following(false);
+			set_particle(center_x + dx, center_y + dy, p);
+		}
+	}
+}
+
+void WorldGrid::set_particle_velocity(int world_x, int world_y, int vx, int vy) {
+	Particle p = get_particle_readonly(world_x, world_y);
+	if (p.mat_id == 0)
+		return;
+	p.vx = clamp_velocity(vx);
+	p.vy = clamp_velocity(vy);
+	p.set_rest(0);
+	p.set_following(false);
+	set_particle(world_x, world_y, p);
+}
+
 Particle WorldGrid::make_particle(uint8_t mat_id) {
 	if (mat_id == 0) {
 		return Particle();
@@ -127,6 +182,9 @@ Particle WorldGrid::convert_particle(Particle source, uint8_t into) const {
 	if (into != source.mat_id) {
 		source.mat_id = into;
 		source.hp = materials.get(into).max_hp;
+		// A new material starts unsettled (e.g. steam condensing to water).
+		source.set_rest(0);
+		source.set_following(false);
 	}
 	return source;
 }
@@ -171,6 +229,7 @@ void WorldGrid::clear_updated_particles() {
 
 void WorldGrid::tick() {
 	clear_updated_particles();
+	++tick_count;
 
 	std::vector<Vector2i> chunk_positions;
 	chunk_positions.reserve(chunks.size());
@@ -224,6 +283,7 @@ void WorldGrid::clear() {
 	chunks.clear();
 	updated_particles.clear();
 	alternate_direction = false;
+	tick_count = 0;
 }
 
 std::vector<WorldGrid::ChunkDebugInfo> WorldGrid::get_debug_chunk_info() const {
@@ -289,6 +349,8 @@ std::vector<uint8_t> WorldGrid::serialize() const {
 			data.push_back(particle.flags);
 			data.push_back(particle.hp);
 			data.push_back(particle.shade);
+			data.push_back(static_cast<uint8_t>(particle.vx));
+			data.push_back(static_cast<uint8_t>(particle.vy));
 		}
 	}
 
@@ -311,7 +373,8 @@ bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
 			return fail("Snapshot has an invalid header.");
 		}
 	}
-	if (read_u32(data, 4) != SNAPSHOT_VERSION) {
+	const uint32_t version = read_u32(data, 4);
+	if (version < SNAPSHOT_OLDEST_VERSION || version > SNAPSHOT_VERSION) {
 		return fail("Unsupported snapshot version.");
 	}
 
@@ -364,7 +427,7 @@ bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
 		}
 	}
 
-	const uint64_t expected_size = offset + static_cast<uint64_t>(chunk_count) * SNAPSHOT_CHUNK_SIZE;
+	const uint64_t expected_size = offset + static_cast<uint64_t>(chunk_count) * snapshot_chunk_size(version);
 	if (expected_size != size) {
 		return fail("Snapshot size does not match its header.");
 	}
@@ -392,6 +455,10 @@ bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
 			// Clamp in case the material's max_hp was lowered since the save.
 			particle.hp = std::min(data[offset++], materials.get(particle.mat_id).max_hp);
 			particle.shade = data[offset++];
+			if (version >= 4) {
+				particle.vx = static_cast<int8_t>(data[offset++]);
+				particle.vy = static_cast<int8_t>(data[offset++]);
+			}
 			has_particles = has_particles || particle.mat_id != 0;
 		}
 		if (has_particles) {
@@ -405,5 +472,6 @@ bool WorldGrid::deserialize(const std::vector<uint8_t> &data) {
 	chunks = std::move(restored_chunks);
 	updated_particles.clear();
 	alternate_direction = false;
+	tick_count = 0;
 	return true;
 }

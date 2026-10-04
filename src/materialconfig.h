@@ -27,6 +27,7 @@ struct MaterialConfig {
 	std::uint8_t hp_loss_chance = 0; // Chance per tick to lose 1 hp (lifetime, e.g. burning wood)
 	std::uint8_t break_into = 0; // Material ID produced when hp is exhausted
 	std::uint8_t color_variation = 0; // Max per-particle brightness offset (0-255) when rendering
+	std::uint8_t friction = 0; // Share (n/256) of sideways speed lost per tick while resting on something
 };
 
 } // namespace godot
