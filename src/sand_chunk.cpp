@@ -286,7 +286,13 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	Particle self = grid[get_index(x, y)];
 	// Only the surface of a body of this liquid, resting on more of it. A
 	// settled particle already found nowhere lower to go.
-	if (self.is_settled() || read_cell(x, y + 1, world_grid, world_origin).mat_id != self.mat_id || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+	if (self.is_settled() || self.vy != 0 || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+		return false;
+	const Particle below = read_cell(x, y + 1, world_grid, world_origin);
+	// A falling sheet or stream, or liquid just pushed out over an edge, is
+	// not a body at rest: pushing its top sideways would shoot it out in a
+	// flat line.
+	if (below.mat_id != self.mat_id || below.vy != 0 || read_cell(x, y + 2, world_grid, world_origin).mat_id == 0)
 		return false;
 
 	// Look along the layer just below for the nearest gap in it: the
@@ -308,10 +314,11 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 				row_chunk = world_grid.get_chunk(chunk_x, chunk_y);
 				row_chunk_x = chunk_x;
 			}
-			const std::uint8_t mat_id = row_chunk != nullptr ? row_chunk->grid[local_y * SIZE + local_x].mat_id : 0;
-			if (mat_id == self.mat_id)
+			const Particle cell = row_chunk != nullptr ? row_chunk->grid[local_y * SIZE + local_x] : Particle();
+			// Liquid still falling there isn't part of the body at rest.
+			if (cell.mat_id == self.mat_id && cell.vy == 0)
 				continue;
-			if (mat_id == 0) {
+			if (cell.mat_id == 0) {
 				best_x = x + dir * i;
 				best_distance = i;
 			}

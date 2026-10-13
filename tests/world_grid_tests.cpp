@@ -744,6 +744,30 @@ void test_raised_water_levels_out() {
 		fail("levelled water must fill every row below its surface");
 }
 
+void test_falling_liquid_does_not_shoot_sideways() {
+	WorldGrid world;
+	configure_materials(world);
+	// A tall block of water on a narrow ledge with open air on both sides.
+	for (int x = 40; x <= 80; ++x) {
+		world.set_particle(x, 100, particle(STONE));
+	}
+	for (int y = 40; y < 100; ++y) {
+		for (int x = 40; x <= 80; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	// It pours off the edges. The streams falling past the ledge are not a
+	// pool at rest, so their tops must not be pushed out along the rows
+	// below into thin air.
+	// Spilling off the ledge spreads it a few dozen cells; being shot out
+	// along whole rows would carry it hundreds.
+	for (int tick = 0; tick < 60; ++tick) {
+		world.tick();
+	}
+	if (count_material(world, -400, 0, -100, 300, WATER) + count_material(world, 220, 0, 500, 300, WATER) != 0)
+		fail("falling liquid must not shoot out sideways");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -767,6 +791,7 @@ int main() {
 	test_settled_pool_flows_into_an_opened_gap();
 	test_settling_is_reset_by_falling();
 	test_raised_water_levels_out();
+	test_falling_liquid_does_not_shoot_sideways();
 	test_gravity_accelerates_falls();
 	test_max_fall_speed_limits_falls();
 	test_impulse_throws_and_friction_stops();
