@@ -16,7 +16,7 @@ namespace {
 // cells per tick) splashes: the given share (n/256) of the fall speed
 // becomes sideways speed.
 constexpr int LANDING_SPLASH_SPEED = 2 * Particle::VELOCITY_SCALE;
-constexpr int LIQUID_SPLASH_SHARE = 128;
+constexpr int LIQUID_SPLASH_SHARE = 64;
 constexpr int POWDER_SPLASH_SHARE = 48;
 
 // How far pressure flow looks to each side along the layer below a
@@ -235,6 +235,10 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 		if (cell.mat_id == 0) {
 			end_x = cx;
 			end_y = cy;
+			// Sliding along a surface stops over the first hole, so the
+			// particle drops into it next tick instead of skating past.
+			if (supported && cy == y && can_displace(config, read_cell(cx, cy + 1, world_grid, world_origin), world_grid, false))
+				break;
 			continue;
 		}
 		const bool blocked_down = cy != end_y && !can_displace(config, read_cell(end_x, cy, world_grid, world_origin), world_grid, false);

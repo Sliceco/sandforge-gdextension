@@ -51,7 +51,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 **Velocity** (powders and liquids): each particle carries a velocity in 1/16 cells per tick.
 - Unsupported particles gain `gravity` per tick (default 0.25 cells/tick²) up to `max_fall_speed` (default 6 cells/tick), and always fall at least 1 cell per tick. A particle falling onto another falling particle follows it instead of landing.
 - Each tick a particle moves along its velocity one cell at a time and stops before the first obstacle, so fast particles never tunnel. Entering a lighter fluid swaps with it and loses most of its speed to drag. Fractional speeds advance with the world tick count, so particles at the same speed move in lockstep and a falling column stays together.
-- Landing at 2 cells/tick or faster turns part of the fall into sideways speed (half for liquids, about a fifth for powders), so sand scatters and liquid splashes. Hitting a wall stops sideways motion; there is no bounce.
+- Landing at 2 cells/tick or faster turns part of the fall into sideways speed (a quarter for liquids, about a fifth for powders), so sand scatters and liquid splashes. Hitting a wall stops sideways motion; there is no bounce. A particle sliding along a surface stops over the first cell it can fall into, so it drops into holes instead of skating past them.
 - While resting on something, a particle loses `friction`/256 of its sideways speed per tick.
 - `apply_impulse()` (and explosions) push particles outward; a particle that didn't move by velocity falls back to the slide and dispersion rules below.
 
