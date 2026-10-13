@@ -19,6 +19,10 @@ constexpr int LANDING_SPLASH_SPEED = 2 * Particle::VELOCITY_SCALE;
 constexpr int LIQUID_SPLASH_SHARE = 128;
 constexpr int POWDER_SPLASH_SHARE = 48;
 
+// How far pressure flow looks to each side along the layer below a
+// surface particle for a gap.
+constexpr int PRESSURE_SCAN_CELLS = 64;
+
 // How many times its dispersion a fluid looks sideways for a cell it could
 // fall into before settling, and once settled.
 constexpr int SETTLED_SEARCH_FACTOR = 8;
@@ -143,6 +147,8 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 
 	// Horizontal dispersion (Liquids only)
 	if (config.state == MatterState::LIQUID) {
+		if (try_pressure_flow(x, y, world_grid, world_origin))
+			return true;
 		int side_dir = p.get_flow_dir() != 0 ? p.get_flow_dir() : random.next_sign();
 		if (try_disperse(x, y, side_dir, config, world_grid, world_origin, false))
 			return true;
@@ -276,6 +282,60 @@ void SandSimulationChunk::land(int &vx, int &vy, const MaterialConfig &config, S
 	vy = 0;
 }
 
+bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	Particle self = grid[get_index(x, y)];
+	// Only the surface of a body of this liquid, resting on more of it. A
+	// settled particle already found nowhere lower to go.
+	if (self.is_settled() || read_cell(x, y + 1, world_grid, world_origin).mat_id != self.mat_id || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+		return false;
+
+	// Look along the layer just below for the nearest gap in it: the
+	// liquid there is lower than this particle, so the body isn't level.
+	// Bounded, so a huge lake costs the same as a puddle.
+	const int first = world_grid.get_random().next_sign();
+	int best_x = 0, best_distance = 0;
+	const int row_y = world_origin.y + y + 1;
+	for (int dir : { first, -first }) {
+		// Look up each chunk along the row once, not once per cell.
+		const SandSimulationChunk *row_chunk = nullptr;
+		int row_chunk_x = INT_MIN;
+		for (int i = 1; i <= PRESSURE_SCAN_CELLS && (best_distance == 0 || i < best_distance); ++i) {
+			const int world_x = world_origin.x + x + dir * i;
+			int chunk_x, chunk_y, local_x, local_y;
+			WorldGrid::world_to_chunk(world_x, row_y, chunk_x, chunk_y);
+			WorldGrid::world_to_local(world_x, row_y, local_x, local_y);
+			if (chunk_x != row_chunk_x) {
+				row_chunk = world_grid.get_chunk(chunk_x, chunk_y);
+				row_chunk_x = chunk_x;
+			}
+			const std::uint8_t mat_id = row_chunk != nullptr ? row_chunk->grid[local_y * SIZE + local_x].mat_id : 0;
+			if (mat_id == self.mat_id)
+				continue;
+			if (mat_id == 0) {
+				best_x = x + dir * i;
+				best_distance = i;
+			}
+			break;
+		}
+	}
+	if (best_distance == 0)
+		return false;
+	const int best_y = y + 1;
+
+	// The weight of the liquid above pushes it out there: move this surface
+	// particle to that cell, so a raised heap drains into the lowest point
+	// of its body instead of trickling down its own sides as a staircase.
+	self.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
+	self.set_rest(0);
+	self.set_following(false);
+	self.vx = 0;
+	self.vy = 0;
+	write_cell(x, y, Particle(), world_grid, world_origin);
+	write_cell(best_x, best_y, self, world_grid, world_origin);
+	world_grid.mark_particle_updated(world_origin.x + best_x, world_origin.y + best_y);
+	return true;
+}
+
 bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
 	if (config.dispersion == 0)
 		return false;
@@ -371,8 +431,12 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		write_cell(src_x, src_y, Particle(), world_grid, world_origin);
 		write_cell(dst_x, dst_y, source, world_grid, world_origin);
 		world_grid.mark_particle_updated(destination_position.x, destination_position.y);
-		if (was_settled && src_config.dispersion > 0)
-			pull_sideways_neighbors(src_x, src_y, sideways ? (dst_x > src_x ? 1 : -1) : 0, src_config.dispersion * SETTLED_SEARCH_FACTOR, world_grid, world_origin);
+		// A settled particle that starts moving drags the still layer behind
+		// it along. Any other fluid only wakes a settled particle right next
+		// to the cell it left, e.g. after pressure flow dropped it into a
+		// draining layer.
+		if (src_config.dispersion > 0)
+			pull_sideways_neighbors(src_x, src_y, sideways ? (dst_x > src_x ? 1 : -1) : 0, was_settled ? src_config.dispersion * SETTLED_SEARCH_FACTOR : 1, world_grid, world_origin);
 		return true;
 	}
 

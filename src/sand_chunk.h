@@ -111,6 +111,12 @@ private:
 	// Whether a particle of src_config may move into a cell holding
 	// `destination`: it is empty, or not fixed and loses the density rule.
 	bool can_displace(const MaterialConfig &src_config, const Particle &destination, const WorldGrid &world_grid, bool invert_density) const;
+	// Pressure: a liquid particle on the surface of a body of the same
+	// liquid moves straight into the nearest gap in the layer of that
+	// liquid just below it (within a bounded scan), so a raised heap drains
+	// across the body at once instead of trickling down its own sides as a
+	// staircase. Returns true if moved.
+	bool try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// Slides horizontally toward dir through empty cells (up to the
 	// material's dispersion) and moves to the farthest one reached; never
 	// passes through an occupied cell. A settled particle only slides toward

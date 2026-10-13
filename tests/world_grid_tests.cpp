@@ -710,6 +710,40 @@ void test_snapshot_keeps_velocity_and_loads_version_3() {
 		fail("version 3 particles must load at rest");
 }
 
+void test_raised_water_levels_out() {
+	WorldGrid world;
+	configure_materials(world);
+	for (int x = 39; x <= 201; ++x) {
+		world.set_particle(x, 100, particle(STONE));
+	}
+	for (int y = 40; y < 100; ++y) {
+		world.set_particle(39, y, particle(STONE));
+		world.set_particle(201, y, particle(STONE));
+	}
+	for (int y = 90; y < 100; ++y) {
+		for (int x = 40; x <= 200; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	// A tall block dumped on one side of the pool, with a cliff face.
+	for (int y = 70; y < 90; ++y) {
+		for (int x = 140; x <= 200; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	const int water = count_material(world, 40, 40, 200, 99, WATER);
+	if (tick_until_asleep(world, 600) < 0)
+		fail("a dumped block of water must level out and settle");
+	if (count_material(world, 40, 40, 200, 99, WATER) != water)
+		fail("levelling must not create or destroy water");
+	// 161 columns: 10 full rows plus 1220 cells is 7 more full rows and a
+	// partial one, so a level surface spans at most rows 82 and 83.
+	if (count_material(world, 40, 40, 200, 81, WATER) != 0)
+		fail("levelled water must not keep a raised step");
+	if (count_material(world, 40, 83, 200, 83, WATER) != 161)
+		fail("levelled water must fill every row below its surface");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -732,6 +766,7 @@ int main() {
 	test_still_pool_settles_and_sleeps();
 	test_settled_pool_flows_into_an_opened_gap();
 	test_settling_is_reset_by_falling();
+	test_raised_water_levels_out();
 	test_gravity_accelerates_falls();
 	test_max_fall_speed_limits_falls();
 	test_impulse_throws_and_friction_stops();
