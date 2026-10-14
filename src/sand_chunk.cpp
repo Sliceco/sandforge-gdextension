@@ -22,6 +22,7 @@ constexpr int POWDER_SPLASH_SHARE = 48;
 // How far pressure flow looks to each side along the layer below a
 // surface particle for a gap.
 constexpr int PRESSURE_SCAN_CELLS = 64;
+constexpr int SETTLED_PRESSURE_INTERVAL = 4;
 
 // How many times its dispersion a fluid looks sideways for a cell it could
 // fall into before settling, and once settled.
@@ -286,17 +287,29 @@ void SandSimulationChunk::land(int &vx, int &vy, const MaterialConfig &config, S
 	vy = 0;
 }
 
+namespace {
+// Something liquid can rest on: not empty, and not falling away.
+bool is_resting(const Particle &particle) {
+	return particle.mat_id != 0 && particle.vy <= 0;
+}
+} // namespace
+
 bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	Particle self = grid[get_index(x, y)];
 	// Only the surface of a body of this liquid, resting on more of it. A
 	// settled particle already found nowhere lower to go.
-	if (self.is_settled() || self.vy != 0 || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+	if (self.vy != 0 || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+		return false;
+	// Settled liquid can still be part of a heap whose sides are draining;
+	// it checks for a gap now and then rather than every tick, to keep a
+	// big still surface cheap while its chunk is awake.
+	if (self.is_settled() && (world_grid.get_tick_count() + x) % SETTLED_PRESSURE_INTERVAL != 0)
 		return false;
 	const Particle below = read_cell(x, y + 1, world_grid, world_origin);
 	// A falling sheet or stream, or liquid just pushed out over an edge, is
 	// not a body at rest: pushing its top sideways would shoot it out in a
 	// flat line.
-	if (below.mat_id != self.mat_id || below.vy != 0 || read_cell(x, y + 2, world_grid, world_origin).mat_id == 0)
+	if (below.mat_id != self.mat_id || below.vy != 0 || !is_resting(read_cell(x, y + 2, world_grid, world_origin)))
 		return false;
 
 	// Look along the layer just below for the nearest gap in it: the
@@ -306,21 +319,32 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	int best_x = 0, best_distance = 0;
 	const int row_y = world_origin.y + y + 1;
 	for (int dir : { first, -first }) {
-		// Look up each chunk along the row once, not once per cell.
-		const SandSimulationChunk *row_chunk = nullptr;
-		int row_chunk_x = INT_MIN;
+		// Look up each chunk along the row, and the row under it, once
+		// rather than once per cell.
+		struct RowReader {
+			const WorldGrid &world_grid;
+			int world_y;
+			const SandSimulationChunk *chunk = nullptr;
+			int chunk_x = INT_MIN;
+			Particle read(int world_x) {
+				int cx, cy, lx, ly;
+				WorldGrid::world_to_chunk(world_x, world_y, cx, cy);
+				WorldGrid::world_to_local(world_x, world_y, lx, ly);
+				if (cx != chunk_x) {
+					chunk = world_grid.get_chunk(cx, cy);
+					chunk_x = cx;
+				}
+				return chunk != nullptr ? chunk->grid[ly * SIZE + lx] : Particle();
+			}
+		};
+		RowReader row{ world_grid, row_y };
+		RowReader floor{ world_grid, row_y + 1 };
 		for (int i = 1; i <= PRESSURE_SCAN_CELLS && (best_distance == 0 || i < best_distance); ++i) {
 			const int world_x = world_origin.x + x + dir * i;
-			int chunk_x, chunk_y, local_x, local_y;
-			WorldGrid::world_to_chunk(world_x, row_y, chunk_x, chunk_y);
-			WorldGrid::world_to_local(world_x, row_y, local_x, local_y);
-			if (chunk_x != row_chunk_x) {
-				row_chunk = world_grid.get_chunk(chunk_x, chunk_y);
-				row_chunk_x = chunk_x;
-			}
-			const Particle cell = row_chunk != nullptr ? row_chunk->grid[local_y * SIZE + local_x] : Particle();
-			// Liquid still falling there isn't part of the body at rest.
-			if (cell.mat_id == self.mat_id && cell.vy == 0)
+			const Particle cell = row.read(world_x);
+			// Only liquid at rest on something is part of the body: not
+			// liquid still falling, or flung out over an edge.
+			if (cell.mat_id == self.mat_id && cell.vy == 0 && is_resting(floor.read(world_x)))
 				continue;
 			if (cell.mat_id == 0) {
 				best_x = x + dir * i;
@@ -331,7 +355,22 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	}
 	if (best_distance == 0)
 		return false;
-	const int best_y = y + 1;
+	// From there it runs down the outside of the body to the foot of the
+	// cliff or slope straight away, as the liquid would within a few ticks
+	// anyway. The gap stays open for the next particle, and a raised heap
+	// drains to its lowest point instead of stepping down a row at a time.
+	int best_y = y + 1;
+	const int run_dir = best_x > x ? 1 : -1;
+	for (int i = 0; i < PRESSURE_SCAN_CELLS; ++i) {
+		if (read_cell(best_x, best_y + 1, world_grid, world_origin).mat_id == 0) {
+			++best_y;
+		} else if (read_cell(best_x + run_dir, best_y + 1, world_grid, world_origin).mat_id == 0 && read_cell(best_x + run_dir, best_y, world_grid, world_origin).mat_id == 0) {
+			best_x += run_dir;
+			++best_y;
+		} else {
+			break;
+		}
+	}
 
 	// The weight of the liquid above pushes it out there: move this surface
 	// particle to that cell, so a raised heap drains into the lowest point
@@ -340,10 +379,25 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	self.set_rest(0);
 	self.set_following(false);
 	self.vx = 0;
-	self.vy = 0;
+	// Pushed out over an edge it is already falling, so liquid scanning this
+	// row later in the tick doesn't take it for part of the body and line
+	// up beside it in mid-air.
+	self.vy = read_cell(best_x, best_y + 1, world_grid, world_origin).mat_id == 0 ? Particle::VELOCITY_SCALE : 0;
 	write_cell(x, y, Particle(), world_grid, world_origin);
 	write_cell(best_x, best_y, self, world_grid, world_origin);
 	world_grid.mark_particle_updated(world_origin.x + best_x, world_origin.y + best_y);
+
+	// The liquid around the cell it left may have settled on a wide heap
+	// out of reach of any gap; it is now on an uneven surface, so let it
+	// look for one again.
+	for (const Vector2i &offset : { Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, 1) }) {
+		Particle neighbor = read_cell(x + offset.x, y + offset.y, world_grid, world_origin);
+		if (neighbor.mat_id == self.mat_id && neighbor.is_settled()) {
+			neighbor.set_rest(0);
+			neighbor.set_following(false);
+			write_cell(x + offset.x, y + offset.y, neighbor, world_grid, world_origin);
+		}
+	}
 	return true;
 }
 
@@ -356,10 +410,18 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 	// Walk outward while cells are empty, stopping at the first occupied one
 	// so the particle can't jump over walls or other particles.
 	int reach = 0;
+	const int fall_dy = invert_density ? -1 : 1;
 	for (int i = 1; i <= config.dispersion; ++i) {
 		if (read_cell(x + dir * i, y, world_grid, world_origin).mat_id != 0)
 			break;
 		reach = i;
+		// Stop over the first cell it can fall from instead of leaping out
+		// over an edge or a hole: filling down comes before spreading.
+		// Liquid already falling there is no floor either, or a whole
+		// face of liquid walks out over an edge into the air.
+		const Particle under = read_cell(x + dir * i, y + fall_dy, world_grid, world_origin);
+		if (can_displace(config, under, world_grid, invert_density))
+			break;
 	}
 
 	if (self.is_settled()) {
