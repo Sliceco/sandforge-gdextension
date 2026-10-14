@@ -10,6 +10,7 @@
 using namespace godot;
 
 class WorldGrid;
+class SimRandom;
 
 // Axis-aligned inclusive bounding box of chunk-local cells that require
 // simulation. An empty rect means nothing changed since the last tick and
@@ -81,12 +82,46 @@ private:
 	void write_cell(int x, int y, const Particle &p, WorldGrid &world_grid, Vector2i world_origin);
 
 	bool update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// Gravity, momentum and friction for powders and liquids: updates the
+	// particle's velocity and moves it along it, stopping at obstacles.
+	// Returns true if it moved; a particle that didn't move then gets the
+	// usual diagonal slide and dispersion.
+	bool update_motion(int x, int y, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin);
+	// Velocity after hitting the ground: no vertical speed, and part of a
+	// hard landing turned sideways.
+	void land(int &vx, int &vy, const MaterialConfig &config, SimRandom &random) const;
 	// invert_density flips the "denser wins" swap rule so buoyant gases can
 	// rise past heavier fluids instead of sinking past lighter ones.
-	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false);
+	// A sideways move sets the mover's flow direction, and with may_settle
+	// (it turned around with nowhere lower to go) counts toward its rest
+	// counter; any other move resets the rest counter, and that of a
+	// particle it displaces. `moving`, if given, is the source particle
+	// with updated velocity to place instead of the one in the grid.
+	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false, bool sideways = false, bool may_settle = false, const Particle *moving = nullptr);
+	// Distance along dir, through empty cells, to the nearest cell the
+	// fluid could fall (or rise) out of, or 0 if none is within a few
+	// dispersions.
+	int find_drop(int x, int y, int dir, const MaterialConfig &config, const WorldGrid &world_grid, Vector2i world_origin, bool invert_density) const;
+	// A particle flowed downhill out of (x, y), falling or (move_dir != 0)
+	// sliding toward a drop. The nearest settled fluid it left behind on
+	// that row, within `search` cells, starts following it (see
+	// Particle::is_following()), so a whole layer drains through an
+	// opening, not just the part close enough to see it.
+	void pull_sideways_neighbors(int x, int y, int move_dir, int search, WorldGrid &world_grid, Vector2i world_origin);
+	// Whether a particle of src_config may move into a cell holding
+	// `destination`: it is empty, or not fixed and loses the density rule.
+	bool can_displace(const MaterialConfig &src_config, const Particle &destination, const WorldGrid &world_grid, bool invert_density) const;
+	// Pressure: a liquid particle on the surface of a body of the same
+	// liquid moves straight into the nearest gap in the layer of that
+	// liquid just below it (within a bounded scan), so a raised heap drains
+	// across the body at once instead of trickling down its own sides as a
+	// staircase. Returns true if moved.
+	bool try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	bool try_pressure_move(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// Slides horizontally toward dir through empty cells (up to the
 	// material's dispersion) and moves to the farthest one reached; never
-	// passes through an occupied cell.
+	// passes through an occupied cell. A settled particle only slides toward
+	// a cell it can fall from (see find_drop()), and otherwise stays put.
 	bool try_disperse(int x, int y, int dir, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density);
 
 	// Reaction pass. Each returns true if it changed the cell.

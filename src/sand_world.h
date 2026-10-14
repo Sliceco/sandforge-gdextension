@@ -6,6 +6,7 @@
 #include "godot_cpp/variant/dictionary.hpp"
 #include "godot_cpp/variant/packed_byte_array.hpp"
 #include "godot_cpp/variant/typed_array.hpp"
+#include "godot_cpp/variant/vector2.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
 
 #include "world_grid.h"
@@ -56,8 +57,18 @@ public:
 	void brush_circle(Vector2i pos, int radius, int mat_id);
 	void brush_rectangle(Vector2i pos, Vector2i size, int mat_id);
 	void damage_circle(Vector2i pos, int radius, int amount);
-	// Damage falls off linearly from `power` at the center.
+	// Damage falls off linearly from `power` at the center; loose material
+	// within twice the radius is also flung outward.
 	void explosion(Vector2i pos, int radius, int power = 255);
+
+	// Motion. Velocities are in cells per tick (+y is down).
+	void apply_impulse(Vector2i pos, int radius, float strength);
+	Vector2 get_particle_velocity(Vector2i pos) const;
+	void set_particle_velocity(Vector2i pos, Vector2 velocity);
+	void set_gravity(float gravity);
+	float get_gravity() const;
+	void set_max_fall_speed(float speed);
+	float get_max_fall_speed() const;
 
 	// Rendering
 	PackedByteArray render_to_texture(Vector2i texture_size, Vector2i world_offset);
@@ -83,6 +94,10 @@ private:
 	void replace_default_materials();
 
 	bool has_default_materials = false;
+
+	// Outward speed (cells per tick) an explosion of power 255 gives loose
+	// material at its center.
+	static constexpr float EXPLOSION_MAX_PUSH = 5.0f;
 
 	// Validates add_material() arguments into `config`; false (with an
 	// error printed) if they are out of range.

@@ -35,6 +35,15 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("brush_rectangle", "pos", "size", "mat_id"), &SandWorld::brush_rectangle);
 	ClassDB::bind_method(D_METHOD("damage_circle", "pos", "radius", "amount"), &SandWorld::damage_circle);
 	ClassDB::bind_method(D_METHOD("explosion", "pos", "radius", "power"), &SandWorld::explosion, DEFVAL(255));
+	ClassDB::bind_method(D_METHOD("apply_impulse", "pos", "radius", "strength"), &SandWorld::apply_impulse);
+	ClassDB::bind_method(D_METHOD("get_particle_velocity", "pos"), &SandWorld::get_particle_velocity);
+	ClassDB::bind_method(D_METHOD("set_particle_velocity", "pos", "velocity"), &SandWorld::set_particle_velocity);
+	ClassDB::bind_method(D_METHOD("set_gravity", "gravity"), &SandWorld::set_gravity);
+	ClassDB::bind_method(D_METHOD("get_gravity"), &SandWorld::get_gravity);
+	ClassDB::bind_method(D_METHOD("set_max_fall_speed", "speed"), &SandWorld::set_max_fall_speed);
+	ClassDB::bind_method(D_METHOD("get_max_fall_speed"), &SandWorld::get_max_fall_speed);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity"), "set_gravity", "get_gravity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_fall_speed"), "set_max_fall_speed", "get_max_fall_speed");
 	ClassDB::bind_method(D_METHOD("render_to_texture", "texture_size", "world_offset"), &SandWorld::render_to_texture);
 	ClassDB::bind_method(D_METHOD("tick"), &SandWorld::tick);
 	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &SandWorld::set_seed);
@@ -185,6 +194,7 @@ void SandWorld::set_materials_from_dict(const Dictionary &materials_dict) {
 		config.hp_loss_chance = (uint8_t)CLAMP((int)mat_dict.get("hp_loss_chance", 0), 0, 255);
 		config.break_into = (uint8_t)break_into;
 		config.color_variation = (uint8_t)CLAMP((int)mat_dict.get("color_variation", 0), 0, 255);
+		config.friction = (uint8_t)CLAMP((int)mat_dict.get("friction", 0), 0, 255);
 		world_grid.get_material_registry().set(config);
 
 		// A "reactions" array replaces this material's existing rules. Each
@@ -395,4 +405,41 @@ void SandWorld::explosion(Vector2i pos, int radius, int power) {
 			}
 		}
 	}
+	// Fling what's loose, including debris the blast just broke off.
+	apply_impulse(pos, radius * 2, EXPLOSION_MAX_PUSH * power / 255.0f);
+}
+
+namespace {
+int to_fixed_velocity(float cells_per_tick) {
+	return (int)std::lround(cells_per_tick * Particle::VELOCITY_SCALE);
+}
+} // namespace
+
+void SandWorld::apply_impulse(Vector2i pos, int radius, float strength) {
+	world_grid.apply_impulse(pos.x, pos.y, radius, to_fixed_velocity(strength));
+}
+
+Vector2 SandWorld::get_particle_velocity(Vector2i pos) const {
+	const Particle p = world_grid.get_particle_readonly(pos.x, pos.y);
+	return Vector2(p.vx, p.vy) / (real_t)Particle::VELOCITY_SCALE;
+}
+
+void SandWorld::set_particle_velocity(Vector2i pos, Vector2 velocity) {
+	world_grid.set_particle_velocity(pos.x, pos.y, to_fixed_velocity(velocity.x), to_fixed_velocity(velocity.y));
+}
+
+void SandWorld::set_gravity(float gravity) {
+	world_grid.set_gravity(to_fixed_velocity(gravity));
+}
+
+float SandWorld::get_gravity() const {
+	return world_grid.get_gravity() / (float)Particle::VELOCITY_SCALE;
+}
+
+void SandWorld::set_max_fall_speed(float speed) {
+	world_grid.set_max_fall_speed(to_fixed_velocity(speed));
+}
+
+float SandWorld::get_max_fall_speed() const {
+	return world_grid.get_max_fall_speed() / (float)Particle::VELOCITY_SCALE;
 }

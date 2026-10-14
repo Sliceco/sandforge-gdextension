@@ -46,6 +46,30 @@
 				[/codeblock]
 			</description>
 		</method>
+		<method name="apply_impulse">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="radius" type="int" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				Push every powder and liquid particle within [param radius] of [param pos] away from it, adding [param strength] cells per tick to its velocity at the center, falling off linearly to 0 just past the radius. Particles at the center are pushed straight up. Fixed solids and gases are not affected. Pushed particles fly in arcs under [member gravity] and slow down by their material's friction once they land.
+			</description>
+		</method>
+		<method name="get_particle_velocity" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="pos" type="Vector2i" />
+			<description>
+				Velocity of the particle at [param pos] in cells per tick (+y is down), or [code]Vector2.ZERO[/code] for an empty cell. Velocities are stored in steps of 1/16 cell per tick, up to about 7.9 in each direction.
+			</description>
+		</method>
+		<method name="set_particle_velocity">
+			<return type="void" />
+			<param index="0" name="pos" type="Vector2i" />
+			<param index="1" name="velocity" type="Vector2" />
+			<description>
+				Set the velocity of the particle at [param pos] in cells per tick (+y is down). Does nothing on an empty cell. Only powders and liquids move by their velocity.
+			</description>
+		</method>
 		<method name="brush_circle">
 			<return type="void" />
 			<param index="0" name="pos" type="Vector2i" />
@@ -118,6 +142,7 @@
 			<param index="2" name="power" type="int" default="255" />
 			<description>
 				Damage particles in a circular area. Damage is [param power] at the center, falls off linearly with distance, and is at least 1 inside the radius, so materials with max_hp 0 are always destroyed. Particles whose hp is exhausted turn into their material's break_into. See [method damage_particle].
+				Then flings loose material (powders and liquids, including debris the blast just broke off) within twice the radius outward, as [method apply_impulse] with a strength of up to 5 cells per tick at power 255.
 			</description>
 		</method>
 		<method name="get_default_materials_json" qualifiers="static">
@@ -188,6 +213,7 @@
 				- hp_loss_chance: per-tick probability (out of 256) of losing 1 hp, giving the material a lifetime (e.g. burning wood with max_hp 60).
 				- break_into: material ID the particle becomes when its hp is exhausted, by damage or over time; 0 destroys it.
 				- color_variation: maximum brightness offset applied per particle when rendering, from a random shade fixed when the particle is created.
+				- friction: share (out of 256) of a powder's or liquid's sideways speed lost each tick while it rests on something. 0 slides until it hits a wall; higher values stop thrown sand or splashing liquid sooner.
 				If present, reactions is an Array of Dictionaries with keys other, chance, into (defaults to the material itself), other_into (defaults to other) and damage (defaults to 0), and replaces that material's existing reactions. With a non-zero damage, each successful roll takes that much hp from the neighbor instead of converting it, and the neighbor becomes its own break_into (not other_into) once its hp is exhausted. See [method add_reaction].
 				[codeblock]
 				world.set_materials_from_dict({
@@ -202,7 +228,7 @@
 		<method name="save_snapshot" qualifiers="const">
 			<return type="PackedByteArray" />
 			<description>
-				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and each particle's material ID, flags, hp and shade, but not material definitions. Snapshots from older versions are rejected.
+				Return a versioned binary snapshot of the current sparse world. Snapshot data includes allocated chunks and each particle's material ID, flags, hp, shade and velocity, but not material definitions. Snapshots from before velocity was added still load, with every particle at rest; older ones are rejected.
 			</description>
 		</method>
 		<method name="set_seed">
@@ -227,6 +253,14 @@
 			</description>
 		</method>
 	</methods>
+	<members>
+		<member name="gravity" type="float" setter="set_gravity" getter="get_gravity" default="0.25">
+			Speed in cells per tick that an unsupported powder or liquid particle gains each tick. Falling particles move at least 1 cell per tick even at 0, as without velocity. Stored in steps of 1/16, up to about 7.9.
+		</member>
+		<member name="max_fall_speed" type="float" setter="set_max_fall_speed" getter="get_max_fall_speed" default="6.0">
+			Fastest a particle can fall, in cells per tick (1 to about 7.9). Fast particles still stop at the first obstacle on their path rather than passing through it.
+		</member>
+	</members>
 	<constants>
 		<constant name="MATTERSTATE_EMPTY" value="0" type="int">
 			Empty/air particle.
@@ -235,10 +269,10 @@
 			Fixed solid (stone, brick) - does not move.
 		</constant>
 		<constant name="MATTERSTATE_SOLID_POWDER" value="2" type="int">
-			Powder (sand, gunpowder) - falls and spreads.
+			Powder (sand, gunpowder) - falls under gravity, keeps momentum, and piles up.
 		</constant>
 		<constant name="MATTERSTATE_LIQUID" value="3" type="int">
-			Liquid (water, oil, acid) - flows downward and sideways.
+			Liquid (water, oil, acid) - falls under gravity, splashes, and flows sideways until level, then settles so still pools stop simulating.
 		</constant>
 		<constant name="MATTERSTATE_GAS" value="4" type="int">
 			Gas (smoke, steam, fire) - rises and disperses.

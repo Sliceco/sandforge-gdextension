@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
@@ -26,6 +27,10 @@ struct hash<Vector2i> {
 
 class WorldGrid {
 public:
+	// 0.25 cells/tick^2 and 6 cells/tick, in 1/Particle::VELOCITY_SCALE units.
+	static constexpr int DEFAULT_GRAVITY = 4;
+	static constexpr int DEFAULT_MAX_FALL_SPEED = 96;
+
 	// Get or create a chunk at the given chunk coordinates
 	SandSimulationChunk *get_or_create_chunk(int chunk_x, int chunk_y);
 
@@ -60,7 +65,8 @@ public:
 	Particle make_particle(std::uint8_t mat_id);
 
 	// `source` turned into `into`: full hp for the new material, keeping its
-	// shade and flags. Converting into its own material keeps its hp.
+	// shade and flags; a changed material starts with fresh flow state.
+	// Converting into its own material keeps its hp.
 	// Returns an empty particle when `into` is 0.
 	Particle convert_particle(Particle source, std::uint8_t into) const;
 
@@ -70,6 +76,28 @@ public:
 	// absorbed the hit; an empty cell absorbs nothing. Projectiles can keep
 	// spending the leftover on the next cell along their path.
 	int damage_particle(int world_x, int world_y, int amount);
+
+	// Gravity, in 1/Particle::VELOCITY_SCALE cells per tick per tick, added
+	// to the velocity of every unsupported powder and liquid each tick.
+	int get_gravity() const { return gravity; }
+	void set_gravity(int value) { gravity = std::clamp(value, 0, 127); }
+	// Fastest fall speed, in 1/Particle::VELOCITY_SCALE cells per tick.
+	int get_max_fall_speed() const { return max_fall_speed; }
+	void set_max_fall_speed(int value) { max_fall_speed = std::clamp(value, Particle::VELOCITY_SCALE, 127); }
+
+	// Ticks since the world was cleared or loaded. Particles at the same
+	// speed use it to move in lockstep (see SandSimulationChunk).
+	std::uint32_t get_tick_count() const { return tick_count; }
+
+	// Pushes every powder and liquid within `radius` of a cell away from it:
+	// `strength` (in 1/Particle::VELOCITY_SCALE cells per tick) at the
+	// center, falling off linearly to 0 just past the radius. Particles at
+	// the center are pushed straight up.
+	void apply_impulse(int center_x, int center_y, int radius, int strength);
+
+	// Sets the velocity of the particle at a cell, waking it; no-op on an
+	// empty cell. Values are clamped to the int8 range.
+	void set_particle_velocity(int world_x, int world_y, int vx, int vy);
 
 	// Records a cell holding a particle with transient flags (moved or
 	// reacted this tick) so they can be cleared before the next tick
@@ -121,6 +149,9 @@ private:
 	std::unordered_map<Vector2i, std::unique_ptr<SandSimulationChunk>> chunks;
 	std::vector<Vector2i> updated_particles;
 	bool alternate_direction = false;
+	std::uint32_t tick_count = 0;
+	int gravity = DEFAULT_GRAVITY;
+	int max_fall_speed = DEFAULT_MAX_FALL_SPEED;
 	std::string last_error;
 	MaterialRegistry materials;
 	SimRandom random;

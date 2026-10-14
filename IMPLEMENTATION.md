@@ -9,7 +9,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 ### Core Components
 
 1. **Particle** (`particle.h`)
-   - 4-byte structure: `mat_id` (material), `flags`, `hp` (remaining durability/lifetime) and `shade` (random per-particle color offset fixed at creation)
+   - 6-byte structure: `mat_id` (material), `flags`, `hp` (remaining durability/lifetime), `shade` (random per-particle color offset fixed at creation) and velocity `vx`, `vy` (int8, in 1/16 cells per tick)
    - Flags: `PARTICLE_FLAG_UPDATED` (moved this tick), `PARTICLE_FLAG_REACTED` (produced by a reaction this tick); both are transient and cleared before the next tick
 
 2. **MaterialConfig** (`materialconfig.h`)
@@ -48,15 +48,27 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 
 ### Movement Rules
 
+**Velocity** (powders and liquids): each particle carries a velocity in 1/16 cells per tick.
+- Unsupported particles gain `gravity` per tick (default 0.25 cells/tick²) up to `max_fall_speed` (default 6 cells/tick), and always fall at least 1 cell per tick. A particle falling onto another falling particle follows it instead of landing.
+- Each tick a particle moves along its velocity one cell at a time and stops before the first obstacle, so fast particles never tunnel. Entering a lighter fluid swaps with it and loses most of its speed to drag. Fractional speeds advance with the world tick count, so particles at the same speed move in lockstep and a falling column stays together.
+- Landing at 2 cells/tick or faster turns part of the fall into sideways speed (a quarter for liquids, about a fifth for powders), so sand scatters and liquid splashes. Hitting a wall stops sideways motion; there is no bounce. A particle sliding along a surface stops over the first cell it can fall into, so it drops into holes instead of skating past them.
+- While resting on something, a particle loses `friction`/256 of its sideways speed per tick.
+- `apply_impulse()` (and explosions) push particles outward; a particle that didn't move by velocity falls back to the slide and dispersion rules below.
+
 **SOLID_POWDER** (sand, gunpowder):
-1. Try move straight down
+1. Move by velocity (falling straight down when unsupported)
 2. Try diagonal down-left/down-right (random)
 3. Stop if blocked
 
 **LIQUID** (water, acid, oil):
-1. Try move straight down
+1. Move by velocity (falling straight down when unsupported)
 2. Try diagonal down-left/down-right
-3. Horizontal dispersion: slide left/right through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls)
+3. Pressure flow: a liquid at rest on the surface of a body of the same liquid looks along the row just below it, up to 64 cells each way through that liquid, for the nearest empty cell. It moves there and then straight on down the outside of the body (falling, or stepping diagonally down a slope, up to 128 cells) to where it would come to rest. Only liquid at rest counts as the body: liquid still falling (nonzero `vy`), or resting on something that is, doesn't, so a falling sheet or a stream pouring over an edge isn't pushed out sideways. The scan does look through up to 64 cells of such falling liquid, so the streams pouring down a tall column's sides don't wall it in, but a gap found beyond them is only taken if the run down from it ends on something rather than in mid-air. When a particle moves, the ones below it in its column (up to four in all per tick) try the same, so a tall column drains fast enough to level out. Settled liquid only looks every fourth tick, and liquid next to the cell it left is unsettled so a wide heap keeps draining. A raised heap or wall of liquid thus drains into the lowest point of its body and levels out in a few hundred ticks, instead of trickling down its own sides one step at a time and leaving a staircase
+4. Horizontal dispersion: slide through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls) or over the first cell it could fall into, so liquid pours over an edge instead of leaping out from it. A liquid keeps sliding in its current flow direction and turns around only when blocked
+5. Settling: a liquid that has turned around 3 times since it last fell, each time with no cell it could fall into within `dispersion * 8` cells on either side, is *settled*. It is resting on a level surface, and would otherwise slide back and forth forever and keep its chunk awake. A settled liquid only slides toward a cell it can fall into; otherwise it stays put so the chunk can sleep. Falling, or being pushed by a falling particle, unsettles it
+6. Draining: when settled liquid starts to fall or flows toward a drop, the nearest settled liquid behind it on the same row *follows* it in that direction until blocked (any liquid sliding sideways also wakes a settled particle right behind it), so a whole resting layer drains through an opening rather than only the part close enough to see it
+
+Settling never removes particles, so liquid mass is conserved. A settled surface is level to within a cell or two (a partial top layer can stay in a short step), and the flow state lives in persistent `Particle::flags` bits, so it survives snapshots.
 
 **SOLID_FIXED** (stone, brick):
 - No movement
@@ -64,7 +76,7 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 **GAS** (smoke, fire, steam):
 1. Try moving up (mirrors powder/liquid falling, but rises)
 2. Try diagonal up-left/up-right
-3. Horizontal dispersion: slide left/right through empty cells, up to `dispersion` cells, stopping at the first occupied cell (never jumps walls)
+3. Horizontal dispersion and settling as for liquids, mirrored: a gas settles against a ceiling and drains upward through openings
 4. Density comparisons are inverted vs. SOLID_POWDER/LIQUID: lower density rises past a denser gas/fluid above it
 
 ### Chemical Reactions
