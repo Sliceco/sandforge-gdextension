@@ -117,6 +117,7 @@ private:
 	// across the body at once instead of trickling down its own sides as a
 	// staircase. Returns true if moved.
 	bool try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	bool try_pressure_move(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// Slides horizontally toward dir through empty cells (up to the
 	// material's dispersion) and moves to the farthest one reached; never
 	// passes through an occupied cell. A settled particle only slides toward

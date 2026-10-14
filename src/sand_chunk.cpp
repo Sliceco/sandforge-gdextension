@@ -23,6 +23,9 @@ constexpr int POWDER_SPLASH_SHARE = 48;
 // surface particle for a gap.
 constexpr int PRESSURE_SCAN_CELLS = 64;
 constexpr int SETTLED_PRESSURE_INTERVAL = 4;
+constexpr int PRESSURE_CROSS_FALLING_CELLS = 64;
+constexpr int PRESSURE_DRAIN_CELLS = 4;
+constexpr int PRESSURE_RUN_CELLS = 128;
 
 // How many times its dispersion a fluid looks sideways for a cell it could
 // fall into before settling, and once settled.
@@ -295,7 +298,23 @@ bool is_resting(const Particle &particle) {
 } // namespace
 
 bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
-	Particle self = grid[get_index(x, y)];
+	if (!try_pressure_move(x, y, world_grid, world_origin))
+		return false;
+	// The liquid under the cell just emptied is on the surface now, and the
+	// same weight pushes it out: drain a few cells of a tall heap per tick
+	// rather than one, so a column of liquid collapses about as fast as it
+	// would fall.
+	for (int i = 1; i < PRESSURE_DRAIN_CELLS; ++i) {
+		if (read_cell(x, y + i, world_grid, world_origin).flags & ParticleFlags::PARTICLE_FLAG_UPDATED)
+			break;
+		if (!try_pressure_move(x, y + i, world_grid, world_origin))
+			break;
+	}
+	return true;
+}
+
+bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	Particle self = read_cell(x, y, world_grid, world_origin);
 	// Only the surface of a body of this liquid, resting on more of it. A
 	// settled particle already found nowhere lower to go.
 	if (self.vy != 0 || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
@@ -316,7 +335,7 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	// liquid there is lower than this particle, so the body isn't level.
 	// Bounded, so a huge lake costs the same as a puddle.
 	const int first = world_grid.get_random().next_sign();
-	int best_x = 0, best_distance = 0;
+	int best_x = 0, best_y = 0, best_distance = 0;
 	const int row_y = world_origin.y + y + 1;
 	for (int dir : { first, -first }) {
 		// Look up each chunk along the row, and the row under it, once
@@ -339,15 +358,45 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 		};
 		RowReader row{ world_grid, row_y };
 		RowReader floor{ world_grid, row_y + 1 };
+		int crossed_falling = 0;
 		for (int i = 1; i <= PRESSURE_SCAN_CELLS && (best_distance == 0 || i < best_distance); ++i) {
 			const int world_x = world_origin.x + x + dir * i;
 			const Particle cell = row.read(world_x);
-			// Only liquid at rest on something is part of the body: not
-			// liquid still falling, or flung out over an edge.
-			if (cell.mat_id == self.mat_id && cell.vy == 0 && is_resting(floor.read(world_x)))
-				continue;
-			if (cell.mat_id == 0) {
-				best_x = x + dir * i;
+			if (cell.mat_id == self.mat_id) {
+				// Liquid at rest on something is part of the body. Liquid
+				// pouring down beside it, e.g. off the side of a heap, is
+				// looked through (a little of it), or it would seal the
+				// heap in.
+				if (cell.vy == 0 && is_resting(floor.read(world_x)))
+					continue;
+				if (++crossed_falling <= PRESSURE_CROSS_FALLING_CELLS)
+					continue;
+				break;
+			}
+			if (cell.mat_id != 0)
+				break;
+			// From the gap it runs down the outside of the body to the foot
+			// of the cliff or slope straight away, as the liquid would
+			// within a few ticks anyway. The gap stays open for the next
+			// particle, and a raised heap drains to its lowest point
+			// instead of stepping down a row at a time.
+			int land_x = x + dir * i, land_y = y + 1;
+			for (int step = 0; step < PRESSURE_RUN_CELLS; ++step) {
+				if (read_cell(land_x, land_y + 1, world_grid, world_origin).mat_id == 0) {
+					++land_y;
+				} else if (read_cell(land_x + dir, land_y + 1, world_grid, world_origin).mat_id == 0 && read_cell(land_x + dir, land_y, world_grid, world_origin).mat_id == 0) {
+					land_x += dir;
+					++land_y;
+				} else {
+					break;
+				}
+			}
+			// Beyond falling liquid it must come down on something, or rows
+			// of it would hang in the air beside the stream and fall as
+			// flat sheets.
+			if (crossed_falling == 0 || read_cell(land_x, land_y + 1, world_grid, world_origin).mat_id != 0) {
+				best_x = land_x;
+				best_y = land_y;
 				best_distance = i;
 			}
 			break;
@@ -355,22 +404,6 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	}
 	if (best_distance == 0)
 		return false;
-	// From there it runs down the outside of the body to the foot of the
-	// cliff or slope straight away, as the liquid would within a few ticks
-	// anyway. The gap stays open for the next particle, and a raised heap
-	// drains to its lowest point instead of stepping down a row at a time.
-	int best_y = y + 1;
-	const int run_dir = best_x > x ? 1 : -1;
-	for (int i = 0; i < PRESSURE_SCAN_CELLS; ++i) {
-		if (read_cell(best_x, best_y + 1, world_grid, world_origin).mat_id == 0) {
-			++best_y;
-		} else if (read_cell(best_x + run_dir, best_y + 1, world_grid, world_origin).mat_id == 0 && read_cell(best_x + run_dir, best_y, world_grid, world_origin).mat_id == 0) {
-			best_x += run_dir;
-			++best_y;
-		} else {
-			break;
-		}
-	}
 
 	// The weight of the liquid above pushes it out there: move this surface
 	// particle to that cell, so a raised heap drains into the lowest point
@@ -382,7 +415,8 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	// Pushed out over an edge it is already falling, so liquid scanning this
 	// row later in the tick doesn't take it for part of the body and line
 	// up beside it in mid-air.
-	self.vy = read_cell(best_x, best_y + 1, world_grid, world_origin).mat_id == 0 ? Particle::VELOCITY_SCALE : 0;
+	const Particle landing = read_cell(best_x, best_y + 1, world_grid, world_origin);
+	self.vy = landing.mat_id == 0 ? Particle::VELOCITY_SCALE : std::max<std::int8_t>(landing.vy, 0);
 	write_cell(x, y, Particle(), world_grid, world_origin);
 	write_cell(best_x, best_y, self, world_grid, world_origin);
 	world_grid.mark_particle_updated(world_origin.x + best_x, world_origin.y + best_y);

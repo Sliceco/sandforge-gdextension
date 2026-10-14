@@ -770,6 +770,40 @@ void test_falling_liquid_does_not_shoot_sideways() {
 		fail("falling liquid must not shoot out sideways");
 }
 
+void test_liquid_column_spreads_through_its_falling_sides() {
+	WorldGrid world;
+	configure_materials(world);
+	// A walled basin with a shallow pool, and a tall column of water dropped
+	// into it near one wall.
+	for (int x = 0; x <= 215; ++x) {
+		world.set_particle(x, 176, particle(STONE));
+	}
+	for (int y = 60; y < 176; ++y) {
+		world.set_particle(0, y, particle(STONE));
+		world.set_particle(215, y, particle(STONE));
+	}
+	for (int y = 140; y < 176; ++y) {
+		for (int x = 1; x < 215; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	for (int y = 15; y < 140; ++y) {
+		for (int x = 25; x < 90; ++x) {
+			world.set_particle(x, y, particle(WATER));
+		}
+	}
+	// The column's sides pour down as it slumps. That falling water must not
+	// wall the rest in: the column has to level out across the basin rather
+	// than stand on the pool.
+	for (int tick = 0; tick < 300; ++tick) {
+		world.tick();
+	}
+	if (count_material(world, 1, 0, 215, 90, WATER) != 0)
+		fail("a liquid column must level out across its basin");
+	if (count_material(world, 150, 100, 215, 140, WATER) == 0)
+		fail("a liquid column must raise the far side of its basin");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -794,6 +828,7 @@ int main() {
 	test_settling_is_reset_by_falling();
 	test_raised_water_levels_out();
 	test_falling_liquid_does_not_shoot_sideways();
+	test_liquid_column_spreads_through_its_falling_sides();
 	test_gravity_accelerates_falls();
 	test_max_fall_speed_limits_falls();
 	test_impulse_throws_and_friction_stops();
