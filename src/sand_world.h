@@ -5,6 +5,7 @@
 #include "godot_cpp/variant/color.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
 #include "godot_cpp/variant/packed_byte_array.hpp"
+#include "godot_cpp/variant/rect2i.hpp"
 #include "godot_cpp/variant/typed_array.hpp"
 #include "godot_cpp/variant/vector2.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
@@ -51,6 +52,17 @@ public:
 	// Returns the damage left over after breaking the particle (0 if it
 	// absorbed the hit), so projectiles can carry it into the next cell.
 	int damage_particle(Vector2i pos, int amount);
+
+	// Queries. State masks are bitmasks of 1 << MatterState.
+	static constexpr int STATE_MASK_SOLIDS = (int)WorldGrid::STATE_MASK_SOLIDS;
+	static constexpr int STATE_MASK_LIQUIDS = (int)WorldGrid::STATE_MASK_LIQUIDS;
+	static constexpr int STATE_MASK_GASES = (int)WorldGrid::STATE_MASK_GASES;
+	int get_particle_state(Vector2i pos) const;
+	bool is_solid(Vector2i pos) const;
+	PackedByteArray get_state_mask(Rect2i rect) const;
+	PackedByteArray get_solid_mask(Rect2i rect, int state_mask = STATE_MASK_SOLIDS) const;
+	Dictionary raycast(Vector2 from, Vector2 to, int state_mask = STATE_MASK_SOLIDS) const;
+	Dictionary get_material_info(int mat_id) const;
 
 	// Brush operations (Phase 4)
 	void brush_line(Vector2i from, Vector2i to, int mat_id, int radius);

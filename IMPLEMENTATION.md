@@ -219,6 +219,9 @@ Key methods:
 - `tick()` - Advance simulation
 - `set_particle(pos, mat_id)` - Place particle
 - `get_particle_mat_id(pos)` - Query particle
+- `get_particle_state(pos)` / `is_solid(pos)` / `get_material_info(mat_id)` - Matter state and material lookups
+- `get_solid_mask(rect, state_mask)` / `get_state_mask(rect)` - One byte per cell over a rect, read a chunk at a time (collision tests)
+- `raycast(from, to, state_mask)` - First matching cell along a segment, with the face normal (line of sight, hitscan)
 - `brush_*()` - Draw shapes
 - `render_to_texture()` - Get pixel data
 - `add_material()` - Define new material types
