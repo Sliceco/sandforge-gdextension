@@ -19,7 +19,7 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("save_snapshot"), &SandWorld::save_snapshot);
 	ClassDB::bind_method(D_METHOD("load_snapshot", "snapshot"), &SandWorld::load_snapshot);
 	ClassDB::bind_method(D_METHOD("add_material", "id", "name", "state", "color", "density", "dispersion", "decay_chance", "decay_into"),
-						 &SandWorld::add_material, DEFVAL(0), DEFVAL(0));
+			&SandWorld::add_material, DEFVAL(0), DEFVAL(0));
 	ClassDB::bind_method(D_METHOD("add_reaction", "material", "other", "material_into", "other_into", "chance"), &SandWorld::add_reaction);
 	ClassDB::bind_method(D_METHOD("clear_reactions"), &SandWorld::clear_reactions);
 	ClassDB::bind_method(D_METHOD("set_materials_from_dict", "materials"), &SandWorld::set_materials_from_dict);
@@ -30,6 +30,12 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_particle_mat_id", "pos"), &SandWorld::get_particle_mat_id);
 	ClassDB::bind_method(D_METHOD("get_particle_hp", "pos"), &SandWorld::get_particle_hp);
 	ClassDB::bind_method(D_METHOD("damage_particle", "pos", "amount"), &SandWorld::damage_particle);
+	ClassDB::bind_method(D_METHOD("get_particle_state", "pos"), &SandWorld::get_particle_state);
+	ClassDB::bind_method(D_METHOD("is_solid", "pos"), &SandWorld::is_solid);
+	ClassDB::bind_method(D_METHOD("get_state_mask", "rect"), &SandWorld::get_state_mask);
+	ClassDB::bind_method(D_METHOD("get_solid_mask", "rect", "state_mask"), &SandWorld::get_solid_mask, DEFVAL(STATE_MASK_SOLIDS));
+	ClassDB::bind_method(D_METHOD("raycast", "from", "to", "state_mask"), &SandWorld::raycast, DEFVAL(STATE_MASK_SOLIDS));
+	ClassDB::bind_method(D_METHOD("get_material_info", "mat_id"), &SandWorld::get_material_info);
 	ClassDB::bind_method(D_METHOD("brush_line", "from", "to", "mat_id", "radius"), &SandWorld::brush_line);
 	ClassDB::bind_method(D_METHOD("brush_circle", "pos", "radius", "mat_id"), &SandWorld::brush_circle);
 	ClassDB::bind_method(D_METHOD("brush_rectangle", "pos", "size", "mat_id"), &SandWorld::brush_rectangle);
@@ -49,6 +55,15 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &SandWorld::set_seed);
 	ClassDB::bind_method(D_METHOD("get_chunk_count"), &SandWorld::get_chunk_count);
 	ClassDB::bind_method(D_METHOD("get_debug_chunk_info"), &SandWorld::get_debug_chunk_info);
+
+	ClassDB::bind_integer_constant(get_class_static(), "", "MATTERSTATE_EMPTY", (int)MatterState::EMPTY);
+	ClassDB::bind_integer_constant(get_class_static(), "", "MATTERSTATE_SOLID_FIXED", (int)MatterState::SOLID_FIXED);
+	ClassDB::bind_integer_constant(get_class_static(), "", "MATTERSTATE_SOLID_POWDER", (int)MatterState::SOLID_POWDER);
+	ClassDB::bind_integer_constant(get_class_static(), "", "MATTERSTATE_LIQUID", (int)MatterState::LIQUID);
+	ClassDB::bind_integer_constant(get_class_static(), "", "MATTERSTATE_GAS", (int)MatterState::GAS);
+	BIND_CONSTANT(STATE_MASK_SOLIDS);
+	BIND_CONSTANT(STATE_MASK_LIQUIDS);
+	BIND_CONSTANT(STATE_MASK_GASES);
 }
 
 SandWorld::SandWorld() {
@@ -137,7 +152,7 @@ void SandWorld::add_reaction(int material, int other, int material_into, int oth
 void SandWorld::add_reaction_rule(int material, int other, int material_into, int other_into, int chance, int damage) {
 	ERR_FAIL_COND_MSG(material < 1 || material > 255, "Reaction material must be in 1..255.");
 	ERR_FAIL_COND_MSG(other < 0 || other > 255 || material_into < 0 || material_into > 255 || other_into < 0 || other_into > 255,
-					  "Reaction material ids must be in 0..255.");
+			"Reaction material ids must be in 0..255.");
 	ERR_FAIL_COND_MSG(chance < 1 || chance > 255, "Reaction chance must be in 1..255.");
 	ERR_FAIL_COND_MSG(damage < 0 || damage > 255, "Reaction damage must be in 0..255.");
 
@@ -220,6 +235,69 @@ void SandWorld::set_particle(Vector2i pos, int mat_id) {
 int SandWorld::get_particle_mat_id(Vector2i pos) const {
 	Particle p = world_grid.get_particle_readonly(pos.x, pos.y);
 	return p.mat_id;
+}
+
+int SandWorld::get_particle_state(Vector2i pos) const {
+	return (int)world_grid.get_particle_state(pos.x, pos.y);
+}
+
+bool SandWorld::is_solid(Vector2i pos) const {
+	return world_grid.is_solid(pos.x, pos.y);
+}
+
+PackedByteArray SandWorld::get_state_mask(Rect2i rect) const {
+	PackedByteArray mask;
+	if (rect.size.x <= 0 || rect.size.y <= 0)
+		return mask;
+	mask.resize((int64_t)rect.size.x * rect.size.y);
+	world_grid.get_state_mask(rect.position.x, rect.position.y, rect.size.x, rect.size.y, mask.ptrw());
+	return mask;
+}
+
+PackedByteArray SandWorld::get_solid_mask(Rect2i rect, int state_mask) const {
+	PackedByteArray mask;
+	if (rect.size.x <= 0 || rect.size.y <= 0)
+		return mask;
+	mask.resize((int64_t)rect.size.x * rect.size.y);
+	world_grid.get_solid_mask(rect.position.x, rect.position.y, rect.size.x, rect.size.y, (uint32_t)state_mask, mask.ptrw());
+	return mask;
+}
+
+Dictionary SandWorld::raycast(Vector2 from, Vector2 to, int state_mask) const {
+	const WorldGrid::RaycastHit hit = world_grid.raycast(from.x, from.y, to.x, to.y, (uint32_t)state_mask);
+	Dictionary result;
+	result["hit"] = hit.hit;
+	if (hit.hit) {
+		result["position"] = Vector2i(hit.x, hit.y);
+		result["mat_id"] = (int)hit.mat_id;
+		result["normal"] = Vector2i(hit.normal_x, hit.normal_y);
+	}
+	return result;
+}
+
+Dictionary SandWorld::get_material_info(int mat_id) const {
+	Dictionary info;
+	if (mat_id < 1 || mat_id > 255)
+		return info;
+	const MaterialConfig &config = world_grid.get_material_registry().get((uint8_t)mat_id);
+	// Unregistered slots keep the default id 0.
+	if (config.id != mat_id)
+		return info;
+	// Same keys as set_materials_from_dict(), so an entry can be edited and
+	// registered again.
+	info["name"] = String::utf8(config.name.c_str());
+	info["state"] = (int)config.state;
+	info["color"] = config.color;
+	info["density"] = (int)config.density;
+	info["dispersion"] = (int)config.dispersion;
+	info["decay_chance"] = (int)config.decay_chance;
+	info["decay_into"] = (int)config.decay_into;
+	info["max_hp"] = (int)config.max_hp;
+	info["hp_loss_chance"] = (int)config.hp_loss_chance;
+	info["break_into"] = (int)config.break_into;
+	info["color_variation"] = (int)config.color_variation;
+	info["friction"] = (int)config.friction;
+	return info;
 }
 
 int SandWorld::get_particle_hp(Vector2i pos) const {

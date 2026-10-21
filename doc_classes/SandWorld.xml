@@ -180,6 +180,52 @@
 				Get the material ID of the particle at the given position, or 0 if empty.
 			</description>
 		</method>
+		<method name="get_material_info" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="mat_id" type="int" />
+			<description>
+				Return the registered configuration of material [param mat_id], with the same keys [method set_materials_from_dict] reads: "name", "state", "color" (a [Color]), "density", "dispersion", "decay_chance", "decay_into", "max_hp", "hp_loss_chance", "break_into", "color_variation" and "friction". Reactions are not included. Returns an empty Dictionary for 0 and for ids that were never registered.
+			</description>
+		</method>
+		<method name="get_particle_state" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="pos" type="Vector2i" />
+			<description>
+				Return the matter state of the cell at [param pos] (one of the MATTERSTATE_* constants): [constant MATTERSTATE_EMPTY] for empty cells, unallocated areas and unregistered materials. Never allocates chunks.
+			</description>
+		</method>
+		<method name="get_solid_mask" qualifiers="const">
+			<return type="PackedByteArray" />
+			<param index="0" name="rect" type="Rect2i" />
+			<param index="1" name="state_mask" type="int" default="6" />
+			<description>
+				Return one byte per cell of [param rect], row by row from its top-left corner: 1 where the cell's matter state is in [param state_mask] (a bitmask of [code]1 &lt;&lt; state[/code], such as [constant STATE_MASK_SOLIDS]), 0 elsewhere. The byte for cell [code](x, y)[/code] is at [code](y - rect.position.y) * rect.size.x + (x - rect.position.x)[/code]. Reads the rect a chunk at a time and never allocates chunks, so testing a body's bounding box against the grid each physics step is one call. Returns an empty array for an empty rect.
+			</description>
+		</method>
+		<method name="get_state_mask" qualifiers="const">
+			<return type="PackedByteArray" />
+			<param index="0" name="rect" type="Rect2i" />
+			<description>
+				Like [method get_solid_mask], but each byte is the cell's matter state (a MATTERSTATE_* value).
+			</description>
+		</method>
+		<method name="is_solid" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="pos" type="Vector2i" />
+			<description>
+				Return [code]true[/code] if the cell at [param pos] holds a fixed solid or a powder.
+			</description>
+		</method>
+		<method name="raycast" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="from" type="Vector2" />
+			<param index="1" name="to" type="Vector2" />
+			<param index="2" name="state_mask" type="int" default="6" />
+			<description>
+				Trace the segment from [param from] to [param to] through the grid, visiting every cell it crosses in order (cell [code](x, y)[/code] covers [code]x..x+1[/code] by [code]y..y+1[/code], so add [code]Vector2(0.5, 0.5)[/code] to start from a cell's center). Returns [code]{"hit": true, "position": Vector2i, "mat_id": int, "normal": Vector2i}[/code] for the first cell whose matter state is in [param state_mask] (default: solids), or [code]{"hit": false}[/code]. The cell [param to] lies in is tested too.
+				[code]normal[/code] points back out of the face the segment entered through, such as [code]Vector2i(-1, 0)[/code] for a wall hit going right; it is [code]Vector2i(0, 0)[/code] when [param from] is already inside a matching cell. Where the segment passes exactly through a cell corner it steps along x first, so it can't slip between two diagonal neighbors. Never allocates chunks.
+			</description>
+		</method>
 		<method name="load_default_materials">
 			<return type="void" />
 			<description>
@@ -276,6 +322,15 @@
 		</constant>
 		<constant name="MATTERSTATE_GAS" value="4" type="int">
 			Gas (smoke, steam, fire) - rises and disperses.
+		</constant>
+		<constant name="STATE_MASK_SOLIDS" value="6" type="int">
+			State mask matching fixed solids and powders ([code](1 &lt;&lt; MATTERSTATE_SOLID_FIXED) | (1 &lt;&lt; MATTERSTATE_SOLID_POWDER)[/code]). The default for [method get_solid_mask] and [method raycast].
+		</constant>
+		<constant name="STATE_MASK_LIQUIDS" value="8" type="int">
+			State mask matching liquids.
+		</constant>
+		<constant name="STATE_MASK_GASES" value="16" type="int">
+			State mask matching gases.
 		</constant>
 	</constants>
 </class>

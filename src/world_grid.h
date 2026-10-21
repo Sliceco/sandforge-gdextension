@@ -52,6 +52,42 @@ public:
 	// Get a particle at world coordinates, returns empty particle if chunk doesn't exist
 	Particle get_particle_readonly(int world_x, int world_y) const;
 
+	// Bitmasks of 1 << MatterState, for the queries below.
+	static constexpr std::uint32_t STATE_MASK_SOLIDS = (1u << (int)MatterState::SOLID_FIXED) | (1u << (int)MatterState::SOLID_POWDER);
+	static constexpr std::uint32_t STATE_MASK_LIQUIDS = 1u << (int)MatterState::LIQUID;
+	static constexpr std::uint32_t STATE_MASK_GASES = 1u << (int)MatterState::GAS;
+
+	// Matter state of the cell's material; EMPTY for empty cells, missing
+	// chunks and unregistered materials.
+	MatterState get_particle_state(int world_x, int world_y) const;
+	bool is_solid(int world_x, int world_y) const {
+		return (STATE_MASK_SOLIDS >> (int)get_particle_state(world_x, world_y)) & 1u;
+	}
+
+	// Writes the matter state of every cell in the width x height rect at
+	// (min_x, min_y) to `out`, one byte per cell, row-major. Walks the rect
+	// chunk by chunk and never allocates chunks.
+	void get_state_mask(int min_x, int min_y, int width, int height, std::uint8_t *out) const;
+	// As get_state_mask(), but 1 where the state is in `state_mask` and 0
+	// elsewhere.
+	void get_solid_mask(int min_x, int min_y, int width, int height, std::uint32_t state_mask, std::uint8_t *out) const;
+
+	struct RaycastHit {
+		bool hit = false;
+		int x = 0, y = 0;
+		std::uint8_t mat_id = 0;
+		// Points back out of the face the ray entered through; (0, 0) when
+		// the ray starts inside a matching cell.
+		int normal_x = 0, normal_y = 0;
+	};
+
+	// Walks every cell the segment from (from_x, from_y) to (to_x, to_y)
+	// crosses, in order, and returns the first whose matter state is in
+	// `state_mask`. Cell (x, y) covers [x, x + 1) x [y, y + 1). Where the
+	// segment passes exactly through a cell corner it steps along x first,
+	// so a diagonal wall one cell thick can't be slipped through.
+	RaycastHit raycast(double from_x, double from_y, double to_x, double to_y, std::uint32_t state_mask) const;
+
 	// Set a particle at world coordinates, creating chunks as needed. Writing
 	// an empty particle into an unallocated chunk is a no-op.
 	void set_particle(int world_x, int world_y, const Particle &p);

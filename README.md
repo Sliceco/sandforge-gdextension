@@ -11,6 +11,7 @@ A high-performance cellular automata engine for Godot 4.x written in C++ via GDE
 * Data-driven reactions between any two materials (acid corrosion, fire spreading, water putting out fire, …) plus material decay (e.g. Fire burning out into Smoke)
 * Brush tools (line, circle, rectangle) and explosion/destruction helpers
 * Direct RGBA8888 texture rendering for fast display via `Image`/`ImageTexture`
+* Grid queries for gameplay code: matter state and material lookups, per-cell solid masks over a rect, and a raycast that returns the hit cell and face normal
 * World snapshot save/load (`save_snapshot` / `load_snapshot`)
 
 See [IMPLEMENTATION.md](./IMPLEMENTATION.md) for a deeper look at the simulation architecture, and [doc_classes/SandWorld.xml](./doc_classes/SandWorld.xml) for the full GDScript API reference (also browsable in the Godot editor's built-in docs after building).

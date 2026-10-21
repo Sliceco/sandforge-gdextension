@@ -804,6 +804,112 @@ void test_liquid_column_spreads_through_its_falling_sides() {
 		fail("a liquid column must raise the far side of its basin");
 }
 
+void test_particle_state_queries() {
+	WorldGrid world;
+	configure_materials(world);
+	world.set_particle(0, 0, particle(STONE));
+	world.set_particle(1, 0, particle(SAND));
+	world.set_particle(2, 0, particle(WATER));
+	world.set_particle(3, 0, particle(SMOKE));
+	world.set_particle(4, 0, particle(99)); // never registered
+	const int chunks = world.get_chunk_count();
+	const MatterState expected[] = { MatterState::SOLID_FIXED, MatterState::SOLID_POWDER, MatterState::LIQUID, MatterState::GAS, MatterState::EMPTY, MatterState::EMPTY };
+	for (int x = 0; x < 6; ++x) {
+		if (world.get_particle_state(x, 0) != expected[x])
+			fail("get_particle_state must report the cell's matter state");
+	}
+	if (!world.is_solid(0, 0) || !world.is_solid(1, 0) || world.is_solid(2, 0) || world.is_solid(5, 0))
+		fail("is_solid must be true for fixed solids and powders only");
+	if (world.get_particle_state(-500, 900) != MatterState::EMPTY || world.is_solid(-500, 900))
+		fail("a cell in a missing chunk must read as empty");
+	if (world.get_chunk_count() != chunks)
+		fail("state queries must not allocate chunks");
+}
+
+void test_state_masks_span_chunk_seams() {
+	WorldGrid world;
+	configure_materials(world);
+	// A rect crossing the chunk seams at x = -64, 0 and 64 and y = 0, with
+	// material on both sides of each and a missing chunk inside it.
+	for (int x : { -70, -65, -64, -1, 0, 63, 64, 69 }) {
+		world.set_particle(x, -1, particle(STONE));
+		world.set_particle(x, 0, particle(WATER));
+		world.set_particle(x, 3, particle(SAND));
+	}
+	const int min_x = -70, min_y = -6, width = 140, height = 76;
+	const int chunks = world.get_chunk_count();
+	std::vector<std::uint8_t> states(width * height, 255), solids(width * height, 255), liquids(width * height, 255);
+	world.get_state_mask(min_x, min_y, width, height, states.data());
+	world.get_solid_mask(min_x, min_y, width, height, WorldGrid::STATE_MASK_SOLIDS, solids.data());
+	world.get_solid_mask(min_x, min_y, width, height, WorldGrid::STATE_MASK_LIQUIDS, liquids.data());
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			const MatterState state = world.get_particle_state(min_x + x, min_y + y);
+			const int i = y * width + x;
+			if (states[i] != (std::uint8_t)state)
+				fail("get_state_mask must match get_particle_state cell by cell");
+			if (solids[i] != (state == MatterState::SOLID_FIXED || state == MatterState::SOLID_POWDER))
+				fail("get_solid_mask must mark solids with the default mask");
+			if (liquids[i] != (state == MatterState::LIQUID))
+				fail("get_solid_mask must honor a custom state mask");
+		}
+	}
+	if (solids[(-1 - min_y) * width + (64 - min_x)] != 1 || liquids[(0 - min_y) * width + (-65 - min_x)] != 1)
+		fail("get_solid_mask must see material on both sides of chunk seams");
+	if (world.get_chunk_count() != chunks)
+		fail("mask queries must not allocate chunks");
+}
+
+void test_raycast() {
+	WorldGrid world;
+	configure_materials(world);
+	world.set_particle(-70, 3, particle(STONE));
+	world.set_particle(70, 3, particle(STONE));
+	world.set_particle(30, 3, particle(WATER));
+	world.set_particle(5, -20, particle(BRICK));
+	const int chunks = world.get_chunk_count();
+
+	// Across chunk seams and negative coordinates, from either side; liquid
+	// doesn't stop the default mask.
+	WorldGrid::RaycastHit hit = world.raycast(-100.5, 3.5, 100.5, 3.5, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x != -70 || hit.y != 3 || hit.mat_id != STONE || hit.normal_x != -1 || hit.normal_y != 0)
+		fail("raycast must hit the first solid going right, facing back");
+	hit = world.raycast(100.5, 3.5, -100.5, 3.5, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x != 70 || hit.normal_x != 1 || hit.normal_y != 0)
+		fail("raycast must hit the first solid going left, facing back");
+	hit = world.raycast(5.5, 50.5, 5.5, -50.5, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x != 5 || hit.y != -20 || hit.normal_x != 0 || hit.normal_y != 1)
+		fail("raycast must hit going up across a chunk seam");
+
+	// A custom mask stops at the liquid instead.
+	hit = world.raycast(0.5, 3.5, 100.5, 3.5, WorldGrid::STATE_MASK_LIQUIDS);
+	if (!hit.hit || hit.x != 30 || hit.mat_id != WATER)
+		fail("raycast must honor a custom state mask");
+
+	// Misses; the end cell itself counts.
+	if (world.raycast(-60.5, 3.5, 60.5, 3.5, WorldGrid::STATE_MASK_SOLIDS).hit)
+		fail("raycast must miss when nothing solid is on the segment");
+	hit = world.raycast(60.5, 3.5, 70.2, 3.9, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x != 70)
+		fail("raycast must test the cell the segment ends in");
+
+	// Starting inside a solid hits at once with no face.
+	hit = world.raycast(70.5, 3.5, 90.5, 3.5, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x != 70 || hit.normal_x != 0 || hit.normal_y != 0)
+		fail("raycast from inside a solid must hit its own cell");
+
+	// A diagonal wall one cell thick, crossed exactly through cell corners,
+	// must not let the ray slip between two diagonal neighbors.
+	for (int i = 0; i < 20; ++i) {
+		world.set_particle(200 + i, 219 - i, particle(STONE));
+	}
+	hit = world.raycast(200.0, 200.0, 220.0, 220.0, WorldGrid::STATE_MASK_SOLIDS);
+	if (!hit.hit || hit.x + hit.y != 419)
+		fail("raycast must not pass through a diagonal wall");
+	if (world.get_chunk_count() != chunks + 1)
+		fail("raycast must not allocate chunks");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -835,5 +941,8 @@ int main() {
 	test_fast_particles_do_not_tunnel();
 	test_hard_landing_splashes_liquid();
 	test_snapshot_keeps_velocity_and_loads_version_3();
+	test_particle_state_queries();
+	test_state_masks_span_chunk_seams();
+	test_raycast();
 	return EXIT_SUCCESS;
 }

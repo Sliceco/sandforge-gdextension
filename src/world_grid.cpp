@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -75,6 +76,102 @@ Particle WorldGrid::get_particle_readonly(int world_x, int world_y) const {
 		return Particle(); // Return empty particle
 	}
 	return chunk->grid[chunk->get_index(local_x, local_y)];
+}
+
+MatterState WorldGrid::get_particle_state(int world_x, int world_y) const {
+	const Particle p = get_particle_readonly(world_x, world_y);
+	return p.mat_id == 0 ? MatterState::EMPTY : materials.get(p.mat_id).state;
+}
+
+void WorldGrid::get_state_mask(int min_x, int min_y, int width, int height, std::uint8_t *out) const {
+	if (width <= 0 || height <= 0)
+		return;
+	std::uint8_t states[MaterialRegistry::MAX_MATERIALS];
+	for (int id = 0; id < MaterialRegistry::MAX_MATERIALS; ++id) {
+		states[id] = id == 0 ? (std::uint8_t)MatterState::EMPTY : (std::uint8_t)materials.get((std::uint8_t)id).state;
+	}
+	const int max_x = min_x + width - 1, max_y = min_y + height - 1;
+	int first_cx, first_cy, last_cx, last_cy;
+	world_to_chunk(min_x, min_y, first_cx, first_cy);
+	world_to_chunk(max_x, max_y, last_cx, last_cy);
+	// One hash lookup per chunk overlapping the rect, not per cell.
+	for (int cy = first_cy; cy <= last_cy; ++cy) {
+		const int y0 = std::max(min_y, cy * SandSimulationChunk::SIZE);
+		const int y1 = std::min(max_y, cy * SandSimulationChunk::SIZE + SandSimulationChunk::SIZE - 1);
+		for (int cx = first_cx; cx <= last_cx; ++cx) {
+			const int x0 = std::max(min_x, cx * SandSimulationChunk::SIZE);
+			const int x1 = std::min(max_x, cx * SandSimulationChunk::SIZE + SandSimulationChunk::SIZE - 1);
+			const SandSimulationChunk *chunk = get_chunk(cx, cy);
+			for (int y = y0; y <= y1; ++y) {
+				std::uint8_t *row = out + (std::size_t)(y - min_y) * width + (x0 - min_x);
+				if (chunk == nullptr) {
+					std::fill(row, row + (x1 - x0 + 1), (std::uint8_t)MatterState::EMPTY);
+					continue;
+				}
+				int lx, ly;
+				world_to_local(x0, y, lx, ly);
+				const Particle *cells = &chunk->grid[ly * SandSimulationChunk::SIZE + lx];
+				for (int i = 0; i <= x1 - x0; ++i) {
+					row[i] = states[cells[i].mat_id];
+				}
+			}
+		}
+	}
+}
+
+void WorldGrid::get_solid_mask(int min_x, int min_y, int width, int height, std::uint32_t state_mask, std::uint8_t *out) const {
+	if (width <= 0 || height <= 0)
+		return;
+	get_state_mask(min_x, min_y, width, height, out);
+	const std::size_t count = (std::size_t)width * height;
+	for (std::size_t i = 0; i < count; ++i) {
+		out[i] = (state_mask >> out[i]) & 1u;
+	}
+}
+
+WorldGrid::RaycastHit WorldGrid::raycast(double from_x, double from_y, double to_x, double to_y, std::uint32_t state_mask) const {
+	RaycastHit result;
+	int x = (int)std::floor(from_x), y = (int)std::floor(from_y);
+	const int end_x = (int)std::floor(to_x), end_y = (int)std::floor(to_y);
+	const double dx = to_x - from_x, dy = to_y - from_y;
+	const int step_x = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+	const int step_y = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+	// Amanatides-Woo: the segment parameter t (0..1) at which the ray
+	// crosses the next vertical / horizontal cell boundary, and how much t
+	// one whole cell takes.
+	const double inf = std::numeric_limits<double>::infinity();
+	const double delta_x = step_x != 0 ? 1.0 / std::abs(dx) : inf;
+	const double delta_y = step_y != 0 ? 1.0 / std::abs(dy) : inf;
+	double next_x = step_x > 0 ? (x + 1 - from_x) * delta_x : (step_x < 0 ? (from_x - x) * delta_x : inf);
+	double next_y = step_y > 0 ? (y + 1 - from_y) * delta_y : (step_y < 0 ? (from_y - y) * delta_y : inf);
+	int normal_x = 0, normal_y = 0;
+	const int steps = std::abs(end_x - x) + std::abs(end_y - y);
+	for (int i = 0;; ++i) {
+		const Particle p = get_particle_readonly(x, y);
+		const MatterState state = p.mat_id == 0 ? MatterState::EMPTY : materials.get(p.mat_id).state;
+		if ((state_mask >> (int)state) & 1u) {
+			result.hit = true;
+			result.x = x;
+			result.y = y;
+			result.mat_id = p.mat_id;
+			result.normal_x = normal_x;
+			result.normal_y = normal_y;
+			return result;
+		}
+		if (i >= steps)
+			return result;
+		if (next_x <= next_y) {
+			x += step_x;
+			next_x += delta_x;
+			normal_x = -step_x;
+			normal_y = 0;
+		} else {
+			y += step_y;
+			next_y += delta_y;
+			normal_x = 0;
+			normal_y = -step_y;
+		}
+	}
 }
 
 void WorldGrid::set_particle(int world_x, int world_y, const Particle &p) {
