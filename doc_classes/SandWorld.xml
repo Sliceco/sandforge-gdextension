@@ -74,13 +74,17 @@
 			<return type="int" />
 			<param index="0" name="position" type="Vector2i" />
 			<param index="1" name="radius" type="int" default="0" />
+			<param index="2" name="strength" type="float" default="1.0" />
 			<description>
-				Adds a point of gravity at [param position] and returns its id for [method remove_gravity_source]. Within [param radius] cells (0 reaches the whole world), powders and liquids fall toward the nearest source and gases rise away from it, for example to make a round planet or asteroid. With no sources, everything falls toward +y.
-				Gravity turns in quarter turns: each cell falls along whichever axis points at the source most directly (vertically on an exact diagonal), so the space around a source splits into four quadrants, each behaving exactly like the default world rotated. Loose material and liquid settle into a rounded square round a source, with flat surfaces on each side. Material does not move sideways or fall across the diagonal seams between quadrants if that would take it further from the source, so the seams act like gentle walls; only particles thrown outward (see [method apply_impulse]) may climb. [member gravity] and [member max_fall_speed] apply in every direction. Cells outside every source's reach fall toward +y, so a source's radius should cover everything that should fall toward it.
+				Adds a point of gravity at [param position] and returns its id for [method remove_gravity_source]. Within [param radius] cells (0 reaches the whole world), powders and liquids fall toward the source and gases rise away from it, for example to make round planets or asteroids. [param strength] scales [member gravity] for this source. Where the reach of several sources overlaps, the strongest pull wins: the source with the smallest distance divided by strength (ties go to the source added first). Outside every source, everything falls toward +y, or floats if [member gravity_outside_sources] is off. With no sources, everything falls toward +y.
+				Falling particles accelerate along the true direction toward the source, so they fall in straight lines from any angle. Height is the true distance to the source: liquid spreads along its surface until it lies level, so seas settle into rings and loose material into round mounds. Cell-to-cell rules (sliding, dispersion) still step along whichever axis points at the source most directly, and a particle may not move sideways to a cell further from the source, or fall to one that is not closer, unless it was thrown outward (see [method apply_impulse]). [member max_fall_speed] applies in every direction.
 				Wakes every chunk. Sources are not stored in snapshots.
 				[codeblock]
-				var planet = world.add_gravity_source(Vector2i(0, 0))
+				var planet = world.add_gravity_source(Vector2i(0, 0), 200)
+				var moon = world.add_gravity_source(Vector2i(320, 0), 90, 0.5)
+				world.gravity_outside_sources = false # zero g between them
 				world.get_gravity_direction(Vector2i(-40, 5)) # Vector2i(1, 0)
+				world.get_gravity_vector(Vector2(-40, 5)) # about (0.248, -0.028): toward the planet
 				[/codeblock]
 			</description>
 		</method>
@@ -94,14 +98,21 @@
 		<method name="clear_gravity_sources">
 			<return type="void" />
 			<description>
-				Removes every gravity source, so everything falls toward +y again.
+				Removes every gravity source, so everything falls toward +y again (or floats, if [member gravity_outside_sources] is off).
 			</description>
 		</method>
 		<method name="get_gravity_direction" qualifiers="const">
 			<return type="Vector2i" />
 			<param index="0" name="pos" type="Vector2i" />
 			<description>
-				The direction powders and liquids fall at a cell: a unit grid vector, [code]Vector2i(0, 1)[/code] without gravity sources. Characters and other game objects can use it to share the simulation's idea of down.
+				The grid direction the cell rules at [param pos] treat as down: a unit grid vector, [code]Vector2i(0, 1)[/code] without gravity sources, or [code]Vector2i(0, 0)[/code] where there is no gravity (see [member gravity_outside_sources]). For smoothly moving bodies, use [method get_gravity_vector].
+			</description>
+		</method>
+		<method name="get_gravity_vector" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector2" />
+			<description>
+				The gravitational acceleration at a point in cell units (cell [code](x, y)[/code] covers [code][x, x + 1)[/code]), in cells per tick squared: [member gravity] times the strength of the source pulling the point, along the true direction toward it. [code]Vector2(0, gravity)[/code] without sources and [code]Vector2(0, 0)[/code] where there is no gravity. Characters, cameras and other game objects can use it to fall and turn smoothly with the same field the particles use.
 			</description>
 		</method>
 		<method name="brush_circle">
@@ -335,7 +346,10 @@
 	</methods>
 	<members>
 		<member name="gravity" type="float" setter="set_gravity" getter="get_gravity" default="0.25">
-			Speed in cells per tick that an unsupported powder or liquid particle gains each tick, toward +y or a gravity source (see [method add_gravity_source]). Falling particles move at least 1 cell per tick even at 0, as without velocity. Stored in steps of 1/16, up to about 7.9.
+			Speed in cells per tick that an unsupported powder or liquid particle gains each tick, toward +y or a gravity source (see [method add_gravity_source]), scaled by the source's strength. Falling particles move at least 1 cell per tick even at 0, as without velocity. Stored in steps of 1/16, up to about 7.9.
+		</member>
+		<member name="gravity_outside_sources" type="bool" setter="set_gravity_outside_sources" getter="get_gravity_outside_sources" default="true">
+			Whether cells outside the reach of every gravity source fall toward +y. When off, they have no gravity: powders and liquids there keep drifting by their velocity until they hit something, then stop, for example in space between planets. Changing it wakes every chunk.
 		</member>
 		<member name="max_fall_speed" type="float" setter="set_max_fall_speed" getter="get_max_fall_speed" default="6.0">
 			Fastest a particle can fall, in cells per tick (1 to about 7.9). Fast particles still stop at the first obstacle on their path rather than passing through it.

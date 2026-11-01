@@ -226,7 +226,7 @@ void WorldGrid::apply_impulse(int center_x, int center_y, int radius, int streng
 		return;
 	const int r2 = radius * radius;
 	// A particle right at the center goes up, against gravity there.
-	const GravityFrame center_frame = get_gravity_frame(center_x, center_y);
+	const GravityFrame center_frame = get_gravity_at(center_x, center_y).frame;
 	for (int dy = -radius; dy <= radius; ++dy) {
 		for (int dx = -radius; dx <= radius; ++dx) {
 			const int d2 = dx * dx + dy * dy;
@@ -395,6 +395,14 @@ void WorldGrid::tick() {
 			chunks.erase(it);
 		}
 	}
+}
+
+void WorldGrid::wake_cell(int world_x, int world_y) {
+	int chunk_x, chunk_y, local_x, local_y;
+	world_to_chunk(world_x, world_y, chunk_x, chunk_y);
+	world_to_local(world_x, world_y, local_x, local_y);
+	if (SandSimulationChunk *chunk = get_chunk(chunk_x, chunk_y))
+		chunk->mark_dirty(local_x, local_y);
 }
 
 void WorldGrid::wake_all_chunks() {

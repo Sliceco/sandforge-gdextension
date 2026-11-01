@@ -87,6 +87,7 @@ private:
 	// address cells by offsets along it (at(), read_at()) and velocities by
 	// their components along it (fall_speed(), side_speed()).
 	GravityFrame frame;
+	GravitySample gravity;
 
 	// (Plain ints: godot-cpp's Vector2i operators aren't inlined.)
 	Vector2i at(int x, int y, int side, int down) const {
@@ -109,8 +110,9 @@ private:
 	bool is_resting(const Particle &p) const { return p.mat_id != 0 && fall_speed(p) <= 0; }
 
 	// Whether moving from local cell (x, y) to `to` goes up, away from the
-	// gravity source (see GravityField::height_at()), or with `or_level`
-	// doesn't go down. Never true without sources.
+	// source pulling the particle being updated: to a higher level (see
+	// GravityField::level()), or with `or_level` (for falls) not strictly
+	// closer. Never true outside every source.
 	bool climbs(int x, int y, Vector2i to, const WorldGrid &world_grid, Vector2i world_origin, bool or_level = false) const;
 
 	// Visits the cells of `rect` lowest first along the chunk's gravity,
@@ -155,6 +157,18 @@ private:
 	// staircase. Returns true if moved.
 	bool try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	bool try_pressure_move(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// Near a gravity source the rules' "down" is only the nearest axis, so
+	// a body of liquid can rest with a surface that is level along that axis
+	// but tilted against the true pull. A surface particle walks along the
+	// surface, through its own liquid, and moves to the empty cell resting
+	// on it that is closest to the source, if that is a lower level than its
+	// own (see GravityField::level()). Seas round a source even out into
+	// rings this way. Returns true if moved.
+	bool try_level_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
+	// A liquid moved near a gravity source: the surface along its row, as
+	// far as try_level_flow() walks, may now reach somewhere lower, so it is
+	// simulated again next tick.
+	void wake_surface_row(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// Slides horizontally toward dir through empty cells (up to the
 	// material's dispersion) and moves to the farthest one reached; never
 	// passes through an occupied cell. A settled particle only slides toward

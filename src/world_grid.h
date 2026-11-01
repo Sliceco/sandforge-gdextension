@@ -123,16 +123,19 @@ public:
 	void set_max_fall_speed(int value) { max_fall_speed = std::clamp(value, Particle::VELOCITY_SCALE, 127); }
 
 	// Point gravity sources; with none, everything falls toward +y. The
-	// gravity strength above applies in every direction.
+	// gravity above is scaled by each source's strength.
 	GravityField &get_gravity_field() { return gravity_field; }
 	const GravityField &get_gravity_field() const { return gravity_field; }
-	GravityFrame get_gravity_frame(int world_x, int world_y) const {
-		return gravity_field.empty() ? GravityFrame() : gravity_field.frame_at(world_x, world_y);
+	GravitySample get_gravity_at(int world_x, int world_y) const {
+		return gravity_field.is_uniform() ? GravitySample() : gravity_field.sample(world_x, world_y);
 	}
 
 	// Marks every chunk fully dirty, e.g. after gravity changed direction,
 	// so resting material re-evaluates.
 	void wake_all_chunks();
+	// Marks a cell (and its neighbors) for simulation next tick without
+	// changing it; no-op where no chunk exists.
+	void wake_cell(int world_x, int world_y);
 
 	// Ticks since the world was cleared or loaded. Particles at the same
 	// speed use it to move in lockstep (see SandSimulationChunk).
