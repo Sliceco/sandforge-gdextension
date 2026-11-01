@@ -48,6 +48,10 @@ void SandWorld::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_gravity"), &SandWorld::get_gravity);
 	ClassDB::bind_method(D_METHOD("set_max_fall_speed", "speed"), &SandWorld::set_max_fall_speed);
 	ClassDB::bind_method(D_METHOD("get_max_fall_speed"), &SandWorld::get_max_fall_speed);
+	ClassDB::bind_method(D_METHOD("add_gravity_source", "position", "radius"), &SandWorld::add_gravity_source, DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("remove_gravity_source", "id"), &SandWorld::remove_gravity_source);
+	ClassDB::bind_method(D_METHOD("clear_gravity_sources"), &SandWorld::clear_gravity_sources);
+	ClassDB::bind_method(D_METHOD("get_gravity_direction", "pos"), &SandWorld::get_gravity_direction);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity"), "set_gravity", "get_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_fall_speed"), "set_max_fall_speed", "get_max_fall_speed");
 	ClassDB::bind_method(D_METHOD("render_to_texture", "texture_size", "world_offset"), &SandWorld::render_to_texture);
@@ -520,4 +524,29 @@ void SandWorld::set_max_fall_speed(float speed) {
 
 float SandWorld::get_max_fall_speed() const {
 	return world_grid.get_max_fall_speed() / (float)Particle::VELOCITY_SCALE;
+}
+
+int SandWorld::add_gravity_source(Vector2i position, int radius) {
+	const int id = world_grid.get_gravity_field().add_source(position, radius);
+	world_grid.wake_all_chunks();
+	return id;
+}
+
+bool SandWorld::remove_gravity_source(int id) {
+	if (!world_grid.get_gravity_field().remove_source(id))
+		return false;
+	world_grid.wake_all_chunks();
+	return true;
+}
+
+void SandWorld::clear_gravity_sources() {
+	if (world_grid.get_gravity_field().empty())
+		return;
+	world_grid.get_gravity_field().clear();
+	world_grid.wake_all_chunks();
+}
+
+Vector2i SandWorld::get_gravity_direction(Vector2i pos) const {
+	const GravityFrame frame = world_grid.get_gravity_frame(pos.x, pos.y);
+	return Vector2i(frame.down_x, frame.down_y);
 }

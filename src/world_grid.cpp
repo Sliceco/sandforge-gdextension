@@ -225,6 +225,8 @@ void WorldGrid::apply_impulse(int center_x, int center_y, int radius, int streng
 	if (radius < 0 || strength == 0)
 		return;
 	const int r2 = radius * radius;
+	// A particle right at the center goes up, against gravity there.
+	const GravityFrame center_frame = get_gravity_frame(center_x, center_y);
 	for (int dy = -radius; dy <= radius; ++dy) {
 		for (int dx = -radius; dx <= radius; ++dx) {
 			const int d2 = dx * dx + dy * dy;
@@ -236,8 +238,8 @@ void WorldGrid::apply_impulse(int center_x, int center_y, int radius, int streng
 				continue;
 			const float distance = std::sqrt(static_cast<float>(d2));
 			const float push = strength * (1.0f - distance / static_cast<float>(radius + 1));
-			const float dir_x = d2 == 0 ? 0.0f : dx / distance;
-			const float dir_y = d2 == 0 ? -1.0f : dy / distance;
+			const float dir_x = d2 == 0 ? static_cast<float>(-center_frame.down_x) : dx / distance;
+			const float dir_y = d2 == 0 ? static_cast<float>(-center_frame.down_y) : dy / distance;
 			p.vx = clamp_velocity(p.vx + static_cast<int>(std::lround(push * dir_x)));
 			p.vy = clamp_velocity(p.vy + static_cast<int>(std::lround(push * dir_y)));
 			// Thrown fluid must be free to flow again once it lands.
@@ -347,11 +349,30 @@ void WorldGrid::tick() {
 	// the intra-chunk column scan, lets a falling column clear space in the
 	// chunk below before the chunk above is simulated, so cross-chunk falls
 	// cascade within one tick just like they do inside a single chunk.
-	std::sort(chunk_positions.begin(), chunk_positions.end(), [this](const Vector2i &a, const Vector2i &b) {
-		if (a.y != b.y)
-			return a.y > b.y;
-		return alternate_direction ? a.x < b.x : a.x > b.x;
-	});
+	// With gravity sources, "bottom" is the side nearest a source: chunks
+	// sort by height (see GravityField::height_at()) of their centers.
+	if (gravity_field.empty()) {
+		std::sort(chunk_positions.begin(), chunk_positions.end(), [this](const Vector2i &a, const Vector2i &b) {
+			if (a.y != b.y)
+				return a.y > b.y;
+			return alternate_direction ? a.x < b.x : a.x > b.x;
+		});
+	} else {
+		std::vector<std::pair<GravityField::Height, Vector2i>> keyed;
+		keyed.reserve(chunk_positions.size());
+		constexpr int HALF = SandSimulationChunk::SIZE / 2;
+		for (const Vector2i &position : chunk_positions)
+			keyed.emplace_back(gravity_field.height_at(position.x * SandSimulationChunk::SIZE + HALF, position.y * SandSimulationChunk::SIZE + HALF), position);
+		std::sort(keyed.begin(), keyed.end(), [this](const auto &a, const auto &b) {
+			if (a.first != b.first)
+				return a.first < b.first;
+			if (a.second.y != b.second.y)
+				return a.second.y > b.second.y;
+			return alternate_direction ? a.second.x < b.second.x : a.second.x > b.second.x;
+		});
+		for (std::size_t i = 0; i < keyed.size(); ++i)
+			chunk_positions[i] = keyed[i].second;
+	}
 
 	// New destination chunks are deferred to the following tick.
 	std::vector<Vector2i> ticked_positions;
@@ -374,6 +395,11 @@ void WorldGrid::tick() {
 			chunks.erase(it);
 		}
 	}
+}
+
+void WorldGrid::wake_all_chunks() {
+	for (auto &[position, chunk] : chunks)
+		chunk->dirty_rect = DirtyRect{ 0, 0, SandSimulationChunk::SIZE - 1, SandSimulationChunk::SIZE - 1 };
 }
 
 void WorldGrid::clear() {

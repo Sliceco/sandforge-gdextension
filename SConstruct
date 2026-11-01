@@ -104,6 +104,7 @@ test_program = env.Program(
     "build/tests/world_grid_tests",
     source=[
         "tests/world_grid_tests.cpp",
+        "src/gravity_field.cpp",
         "src/sand_chunk.cpp",
         "src/world_grid.cpp",
     ],

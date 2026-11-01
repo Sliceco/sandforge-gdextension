@@ -76,19 +76,15 @@ void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, 
 	DirtyRect active_rect = dirty_rect;
 	dirty_rect.clear();
 
-	// Phase 1: Movement pass - bottom-to-top to let items fall naturally
-	for (int y = active_rect.max_y; y >= active_rect.min_y; --y) {
-		// Alternate horizontal scan direction to prevent bias asymmetry
-		if (alternate_direction) {
-			for (int x = active_rect.min_x; x <= active_rect.max_x; ++x) {
-				update_particle(x, y, world_grid, world_origin);
-			}
-		} else {
-			for (int x = active_rect.max_x; x >= active_rect.min_x; --x) {
-				update_particle(x, y, world_grid, world_origin);
-			}
-		}
-	}
+	// Phase 1: Movement pass - bottom-to-top to let items fall naturally.
+	// "Bottom" follows the gravity at the chunk's center; cells whose own
+	// gravity points another way (near a source) may move a tick later
+	// than they could, which the UPDATED flag keeps safe.
+	const GravityField &gravity_field = world_grid.get_gravity_field();
+	const GravityFrame chunk_frame = gravity_field.empty() ? GravityFrame() : gravity_field.frame_at(world_origin.x + SIZE / 2, world_origin.y + SIZE / 2);
+	scan_lowest_first(active_rect, chunk_frame, alternate_direction, [&](int x, int y) {
+		update_particle(x, y, world_grid, world_origin);
+	});
 
 	// Phase 2: Reaction pass - check for chemical interactions
 	for (int y = active_rect.min_y; y <= active_rect.max_y; ++y) {
@@ -96,6 +92,44 @@ void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, 
 			check_neighborhood_reactions(x, y, world_grid, world_origin);
 		}
 	}
+}
+
+template <typename Visit>
+void SandSimulationChunk::scan_lowest_first(const DirtyRect &rect, const GravityFrame &chunk_frame, bool alternate_direction, Visit visit) {
+	if (chunk_frame.is_default()) {
+		for (int y = rect.max_y; y >= rect.min_y; --y) {
+			// Alternate horizontal scan direction to prevent bias asymmetry
+			if (alternate_direction) {
+				for (int x = rect.min_x; x <= rect.max_x; ++x)
+					visit(x, y);
+			} else {
+				for (int x = rect.max_x; x >= rect.min_x; --x)
+					visit(x, y);
+			}
+		}
+		return;
+	}
+	// The same walk in the frame's coordinates: rows along the side axis,
+	// from the largest down coordinate to the smallest.
+	const int down_a = chunk_frame.down_of(rect.min_x, rect.min_y), down_b = chunk_frame.down_of(rect.max_x, rect.max_y);
+	const int side_a = chunk_frame.side_of(rect.min_x, rect.min_y), side_b = chunk_frame.side_of(rect.max_x, rect.max_y);
+	const int side_min = std::min(side_a, side_b), side_max = std::max(side_a, side_b);
+	for (int down = std::max(down_a, down_b); down >= std::min(down_a, down_b); --down) {
+		for (int i = 0; i <= side_max - side_min; ++i) {
+			const int side = alternate_direction ? side_min + i : side_max - i;
+			const Vector2i cell = chunk_frame.to_world(side, down);
+			visit(cell.x, cell.y);
+		}
+	}
+}
+
+bool SandSimulationChunk::climbs(int x, int y, Vector2i to, const WorldGrid &world_grid, Vector2i world_origin, bool or_level) const {
+	const GravityField &gravity_field = world_grid.get_gravity_field();
+	if (gravity_field.empty())
+		return false;
+	const GravityField::Height from = gravity_field.height_at(world_origin.x + x, world_origin.y + y);
+	const GravityField::Height dest = gravity_field.height_at(world_origin.x + to.x, world_origin.y + to.y);
+	return or_level ? !(dest < from) : from < dest;
 }
 
 Particle SandSimulationChunk::read_cell(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) const {
@@ -135,6 +169,7 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 		return false;
 
 	SimRandom &random = world_grid.get_random();
+	frame = world_grid.get_gravity_frame(world_origin.x + x, world_origin.y + y);
 
 	// Try moving down (Powders and Liquids)
 	if (config.state == MatterState::SOLID_POWDER || config.state == MatterState::LIQUID) {
@@ -143,9 +178,9 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 
 		// Diagonal fall down-left or down-right
 		int side_dir = random.next_sign();
-		if (try_move_or_swap(x, y, x + side_dir, y + 1, config, world_grid, world_origin))
+		if (try_move_or_swap(x, y, at(x, y, side_dir, 1), config, world_grid, world_origin))
 			return true;
-		if (try_move_or_swap(x, y, x - side_dir, y + 1, config, world_grid, world_origin))
+		if (try_move_or_swap(x, y, at(x, y, -side_dir, 1), config, world_grid, world_origin))
 			return true;
 	}
 
@@ -164,13 +199,13 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 	// fall, so movement mirrors the powder/liquid logic with an inverted
 	// density rule (lighter gas displaces denser gas/fluid above it).
 	if (config.state == MatterState::GAS) {
-		if (try_move_or_swap(x, y, x, y - 1, config, world_grid, world_origin, true))
+		if (try_move_or_swap(x, y, at(x, y, 0, -1), config, world_grid, world_origin, true))
 			return true;
 
 		int side_dir = random.next_sign();
-		if (try_move_or_swap(x, y, x + side_dir, y - 1, config, world_grid, world_origin, true))
+		if (try_move_or_swap(x, y, at(x, y, side_dir, -1), config, world_grid, world_origin, true))
 			return true;
-		if (try_move_or_swap(x, y, x - side_dir, y - 1, config, world_grid, world_origin, true))
+		if (try_move_or_swap(x, y, at(x, y, -side_dir, -1), config, world_grid, world_origin, true))
 			return true;
 
 		if (p.get_flow_dir() != 0)
@@ -205,13 +240,14 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 	const Particle original = grid[get_index(x, y)];
 	Particle self = original;
 	SimRandom &random = world_grid.get_random();
-	int vx = self.vx;
-	int vy = self.vy;
+	// Along the frame: vx sideways, vy down.
+	int vx = side_speed(self);
+	int vy = fall_speed(self);
 
 	// Something falling below isn't support: follow it down instead of
 	// landing on it.
-	const Particle below = read_cell(x, y + 1, world_grid, world_origin);
-	const bool supported = !can_displace(config, below, world_grid, false) && below.vy <= 0;
+	const Particle below = read_at(x, y, 0, 1, world_grid, world_origin);
+	const bool supported = !can_displace(config, below, world_grid, false) && fall_speed(below) <= 0;
 	if (!supported || vy < 0)
 		vy = std::min(vy + world_grid.get_gravity(), world_grid.get_max_fall_speed());
 	if (supported) {
@@ -229,24 +265,31 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 		dy = 1;
 
 	// Walk the path a cell at a time and stop before the first obstacle,
-	// so fast particles never tunnel through walls.
-	int end_x = x, end_y = y;
+	// so fast particles never tunnel through walls. Positions are offsets
+	// from (x, y) along the frame.
+	int end_x = 0, end_y = 0;
 	const int steps = std::max(std::abs(dx), std::abs(dy));
 	for (int i = 1; i <= steps; ++i) {
-		const int cx = x + (dx * i + (dx >= 0 ? steps / 2 : -steps / 2)) / steps;
-		const int cy = y + (dy * i + (dy >= 0 ? steps / 2 : -steps / 2)) / steps;
-		const Particle cell = read_cell(cx, cy, world_grid, world_origin);
+		const int cx = (dx * i + (dx >= 0 ? steps / 2 : -steps / 2)) / steps;
+		const int cy = (dy * i + (dy >= 0 ? steps / 2 : -steps / 2)) / steps;
+		const Particle cell = read_at(x, y, cx, cy, world_grid, world_origin);
+		// Where gravity turns (between the quadrants around a source),
+		// moving on would carry it uphill: a wall unless thrown upward.
+		if (vy >= 0 && climbs(x, y, at(x, y, cx, cy), world_grid, world_origin)) {
+			vx = 0;
+			break;
+		}
 		if (cell.mat_id == 0) {
 			end_x = cx;
 			end_y = cy;
 			// Sliding along a surface stops over the first hole, so the
 			// particle drops into it next tick instead of skating past.
-			if (supported && cy == y && can_displace(config, read_cell(cx, cy + 1, world_grid, world_origin), world_grid, false))
+			if (supported && cy == 0 && can_displace(config, read_at(x, y, cx, cy + 1, world_grid, world_origin), world_grid, false))
 				break;
 			continue;
 		}
-		const bool blocked_down = cy != end_y && !can_displace(config, read_cell(end_x, cy, world_grid, world_origin), world_grid, false);
-		const bool blocked_side = cx != end_x && !can_displace(config, read_cell(cx, end_y, world_grid, world_origin), world_grid, false);
+		const bool blocked_down = cy != end_y && !can_displace(config, read_at(x, y, end_x, cy, world_grid, world_origin), world_grid, false);
+		const bool blocked_side = cx != end_x && !can_displace(config, read_at(x, y, cx, end_y, world_grid, world_origin), world_grid, false);
 		if (can_displace(config, cell, world_grid, false)) {
 			// Sinking into a lighter fluid: swap with it and lose most speed
 			// to drag.
@@ -255,9 +298,9 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 			vx /= 2;
 			vy = std::min(vy, Particle::VELOCITY_SCALE);
 		} else if (blocked_down || !blocked_side) {
-			const Particle under = read_cell(end_x, cy, world_grid, world_origin);
-			if (vy > 0 && under.mat_id != 0 && under.vy > 0)
-				vy = std::min<int>(vy, under.vy); // Falling onto something falling.
+			const Particle under = read_at(x, y, end_x, cy, world_grid, world_origin);
+			if (vy > 0 && under.mat_id != 0 && fall_speed(under) > 0)
+				vy = std::min<int>(vy, fall_speed(under)); // Falling onto something falling.
 			else if (vy > 0)
 				land(vx, vy, config, random);
 			else
@@ -268,15 +311,14 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 		break;
 	}
 
-	self.vx = to_velocity(vx);
-	self.vy = to_velocity(vy);
-	if (end_x == x && end_y == y) {
+	set_velocity(self, to_velocity(vx), to_velocity(vy));
+	if (end_x == 0 && end_y == 0) {
 		// Didn't move: keep the new velocity (and stay awake) if it changed.
 		if (self.vx != original.vx || self.vy != original.vy)
 			write_cell(x, y, self, world_grid, world_origin);
 		return false;
 	}
-	return try_move_or_swap(x, y, end_x, end_y, config, world_grid, world_origin, false, end_y == y, false, &self);
+	return try_move_or_swap(x, y, at(x, y, end_x, end_y), config, world_grid, world_origin, false, end_y == 0, false, &self);
 }
 
 void SandSimulationChunk::land(int &vx, int &vy, const MaterialConfig &config, SimRandom &random) const {
@@ -290,13 +332,6 @@ void SandSimulationChunk::land(int &vx, int &vy, const MaterialConfig &config, S
 	vy = 0;
 }
 
-namespace {
-// Something liquid can rest on: not empty, and not falling away.
-bool is_resting(const Particle &particle) {
-	return particle.mat_id != 0 && particle.vy <= 0;
-}
-} // namespace
-
 bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
 	if (!try_pressure_move(x, y, world_grid, world_origin))
 		return false;
@@ -305,9 +340,10 @@ bool SandSimulationChunk::try_pressure_flow(int x, int y, WorldGrid &world_grid,
 	// rather than one, so a column of liquid collapses about as fast as it
 	// would fall.
 	for (int i = 1; i < PRESSURE_DRAIN_CELLS; ++i) {
-		if (read_cell(x, y + i, world_grid, world_origin).flags & ParticleFlags::PARTICLE_FLAG_UPDATED)
+		if (read_at(x, y, 0, i, world_grid, world_origin).flags & ParticleFlags::PARTICLE_FLAG_UPDATED)
 			break;
-		if (!try_pressure_move(x, y + i, world_grid, world_origin))
+		const Vector2i next = at(x, y, 0, i);
+		if (!try_pressure_move(next.x, next.y, world_grid, world_origin))
 			break;
 	}
 	return true;
@@ -317,18 +353,18 @@ bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid,
 	Particle self = read_cell(x, y, world_grid, world_origin);
 	// Only the surface of a body of this liquid, resting on more of it. A
 	// settled particle already found nowhere lower to go.
-	if (self.vy != 0 || read_cell(x, y - 1, world_grid, world_origin).mat_id == self.mat_id)
+	if (fall_speed(self) != 0 || read_at(x, y, 0, -1, world_grid, world_origin).mat_id == self.mat_id)
 		return false;
 	// Settled liquid can still be part of a heap whose sides are draining;
 	// it checks for a gap now and then rather than every tick, to keep a
 	// big still surface cheap while its chunk is awake.
 	if (self.is_settled() && (world_grid.get_tick_count() + x) % SETTLED_PRESSURE_INTERVAL != 0)
 		return false;
-	const Particle below = read_cell(x, y + 1, world_grid, world_origin);
+	const Particle below = read_at(x, y, 0, 1, world_grid, world_origin);
 	// A falling sheet or stream, or liquid just pushed out over an edge, is
 	// not a body at rest: pushing its top sideways would shoot it out in a
 	// flat line.
-	if (below.mat_id != self.mat_id || below.vy != 0 || !is_resting(read_cell(x, y + 2, world_grid, world_origin)))
+	if (below.mat_id != self.mat_id || fall_speed(below) != 0 || !is_resting(read_at(x, y, 0, 2, world_grid, world_origin)))
 		return false;
 
 	// Look along the layer just below for the nearest gap in it: the
@@ -336,55 +372,54 @@ bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid,
 	// Bounded, so a huge lake costs the same as a puddle.
 	const int first = world_grid.get_random().next_sign();
 	int best_x = 0, best_y = 0, best_distance = 0;
-	const int row_y = world_origin.y + y + 1;
 	for (int dir : { first, -first }) {
 		// Look up each chunk along the row, and the row under it, once
 		// rather than once per cell.
 		struct RowReader {
 			const WorldGrid &world_grid;
-			int world_y;
 			const SandSimulationChunk *chunk = nullptr;
-			int chunk_x = INT_MIN;
-			Particle read(int world_x) {
+			int chunk_x = INT_MIN, chunk_y = INT_MIN;
+			Particle read(int origin_x, int origin_y, Vector2i local) {
+				const int world_x = origin_x + local.x, world_y = origin_y + local.y;
 				int cx, cy, lx, ly;
 				WorldGrid::world_to_chunk(world_x, world_y, cx, cy);
 				WorldGrid::world_to_local(world_x, world_y, lx, ly);
-				if (cx != chunk_x) {
+				if (cx != chunk_x || cy != chunk_y) {
 					chunk = world_grid.get_chunk(cx, cy);
 					chunk_x = cx;
+					chunk_y = cy;
 				}
 				return chunk != nullptr ? chunk->grid[ly * SIZE + lx] : Particle();
 			}
 		};
-		RowReader row{ world_grid, row_y };
-		RowReader floor{ world_grid, row_y + 1 };
+		RowReader row{ world_grid };
+		RowReader floor{ world_grid };
 		int crossed_falling = 0;
 		for (int i = 1; i <= PRESSURE_SCAN_CELLS && (best_distance == 0 || i < best_distance); ++i) {
-			const int world_x = world_origin.x + x + dir * i;
-			const Particle cell = row.read(world_x);
+			const Particle cell = row.read(world_origin.x, world_origin.y, at(x, y, dir * i, 1));
 			if (cell.mat_id == self.mat_id) {
 				// Liquid at rest on something is part of the body. Liquid
 				// pouring down beside it, e.g. off the side of a heap, is
 				// looked through (a little of it), or it would seal the
 				// heap in.
-				if (cell.vy == 0 && is_resting(floor.read(world_x)))
+				if (fall_speed(cell) == 0 && is_resting(floor.read(world_origin.x, world_origin.y, at(x, y, dir * i, 2))))
 					continue;
 				if (++crossed_falling <= PRESSURE_CROSS_FALLING_CELLS)
 					continue;
 				break;
 			}
-			if (cell.mat_id != 0)
+			if (cell.mat_id != 0 || climbs(x, y, at(x, y, dir * i, 1), world_grid, world_origin))
 				break;
 			// From the gap it runs down the outside of the body to the foot
 			// of the cliff or slope straight away, as the liquid would
 			// within a few ticks anyway. The gap stays open for the next
 			// particle, and a raised heap drains to its lowest point
 			// instead of stepping down a row at a time.
-			int land_x = x + dir * i, land_y = y + 1;
+			int land_x = dir * i, land_y = 1;
 			for (int step = 0; step < PRESSURE_RUN_CELLS; ++step) {
-				if (read_cell(land_x, land_y + 1, world_grid, world_origin).mat_id == 0) {
+				if (read_at(x, y, land_x, land_y + 1, world_grid, world_origin).mat_id == 0) {
 					++land_y;
-				} else if (read_cell(land_x + dir, land_y + 1, world_grid, world_origin).mat_id == 0 && read_cell(land_x + dir, land_y, world_grid, world_origin).mat_id == 0) {
+				} else if (read_at(x, y, land_x + dir, land_y + 1, world_grid, world_origin).mat_id == 0 && read_at(x, y, land_x + dir, land_y, world_grid, world_origin).mat_id == 0) {
 					land_x += dir;
 					++land_y;
 				} else {
@@ -394,7 +429,7 @@ bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid,
 			// Beyond falling liquid it must come down on something, or rows
 			// of it would hang in the air beside the stream and fall as
 			// flat sheets.
-			if (crossed_falling == 0 || read_cell(land_x, land_y + 1, world_grid, world_origin).mat_id != 0) {
+			if ((crossed_falling == 0 || read_at(x, y, land_x, land_y + 1, world_grid, world_origin).mat_id != 0) && !climbs(x, y, at(x, y, land_x, land_y), world_grid, world_origin)) {
 				best_x = land_x;
 				best_y = land_y;
 				best_distance = i;
@@ -411,25 +446,26 @@ bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid,
 	self.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
 	self.set_rest(0);
 	self.set_following(false);
-	self.vx = 0;
 	// Pushed out over an edge it is already falling, so liquid scanning this
 	// row later in the tick doesn't take it for part of the body and line
 	// up beside it in mid-air.
-	const Particle landing = read_cell(best_x, best_y + 1, world_grid, world_origin);
-	self.vy = landing.mat_id == 0 ? Particle::VELOCITY_SCALE : std::max<std::int8_t>(landing.vy, 0);
+	const Particle landing = read_at(x, y, best_x, best_y + 1, world_grid, world_origin);
+	set_velocity(self, 0, landing.mat_id == 0 ? Particle::VELOCITY_SCALE : std::max(fall_speed(landing), 0));
+	const Vector2i best = at(x, y, best_x, best_y);
 	write_cell(x, y, Particle(), world_grid, world_origin);
-	write_cell(best_x, best_y, self, world_grid, world_origin);
-	world_grid.mark_particle_updated(world_origin.x + best_x, world_origin.y + best_y);
+	write_cell(best.x, best.y, self, world_grid, world_origin);
+	world_grid.mark_particle_updated(world_origin.x + best.x, world_origin.y + best.y);
 
 	// The liquid around the cell it left may have settled on a wide heap
 	// out of reach of any gap; it is now on an uneven surface, so let it
 	// look for one again.
 	for (const Vector2i &offset : { Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, 1) }) {
-		Particle neighbor = read_cell(x + offset.x, y + offset.y, world_grid, world_origin);
+		const Vector2i cell = at(x, y, offset.x, offset.y);
+		Particle neighbor = read_cell(cell.x, cell.y, world_grid, world_origin);
 		if (neighbor.mat_id == self.mat_id && neighbor.is_settled()) {
 			neighbor.set_rest(0);
 			neighbor.set_following(false);
-			write_cell(x + offset.x, y + offset.y, neighbor, world_grid, world_origin);
+			write_cell(cell.x, cell.y, neighbor, world_grid, world_origin);
 		}
 	}
 	return true;
@@ -446,14 +482,14 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 	int reach = 0;
 	const int fall_dy = invert_density ? -1 : 1;
 	for (int i = 1; i <= config.dispersion; ++i) {
-		if (read_cell(x + dir * i, y, world_grid, world_origin).mat_id != 0)
+		if (read_at(x, y, dir * i, 0, world_grid, world_origin).mat_id != 0 || (!invert_density && climbs(x, y, at(x, y, dir * i, 0), world_grid, world_origin)))
 			break;
 		reach = i;
 		// Stop over the first cell it can fall from instead of leaping out
 		// over an edge or a hole: filling down comes before spreading.
 		// Liquid already falling there is no floor either, or a whole
 		// face of liquid walks out over an edge into the air.
-		const Particle under = read_cell(x + dir * i, y + fall_dy, world_grid, world_origin);
+		const Particle under = read_at(x, y, dir * i, fall_dy, world_grid, world_origin);
 		if (can_displace(config, under, world_grid, invert_density))
 			break;
 	}
@@ -465,7 +501,7 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 		const int drop = find_drop(x, y, dir, config, world_grid, world_origin, invert_density);
 		if (self.is_following() && dir == self.get_flow_dir()) {
 			if (reach > 0)
-				return try_move_or_swap(x, y, x + dir * (drop > 0 ? std::min(drop, reach) : reach), y, config, world_grid, world_origin, invert_density, true);
+				return try_move_or_swap(x, y, at(x, y, dir * (drop > 0 ? std::min(drop, reach) : reach), 0), config, world_grid, world_origin, invert_density, true);
 			// Blocked: back to resting. Stop here rather than turning toward
 			// another drop, or a crowd of followers can sway back and forth.
 			self.set_following(false);
@@ -474,7 +510,7 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 		}
 		if (drop == 0)
 			return false;
-		return try_move_or_swap(x, y, x + dir * std::min(drop, static_cast<int>(config.dispersion)), y, config, world_grid, world_origin, invert_density, true);
+		return try_move_or_swap(x, y, at(x, y, dir * std::min(drop, static_cast<int>(config.dispersion)), 0), config, world_grid, world_origin, invert_density, true);
 	}
 
 	// Turning around only counts toward settling when there is nowhere
@@ -485,16 +521,18 @@ bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConf
 
 	// With no empty cell to slide into, the adjacent cell may still be
 	// displaced by the usual density rule.
-	return try_move_or_swap(x, y, x + dir * std::max(reach, 1), y, config, world_grid, world_origin, invert_density, true, may_settle);
+	return try_move_or_swap(x, y, at(x, y, dir * std::max(reach, 1), 0), config, world_grid, world_origin, invert_density, true, may_settle);
 }
 
 int SandSimulationChunk::find_drop(int x, int y, int dir, const MaterialConfig &config, const WorldGrid &world_grid, Vector2i world_origin, bool invert_density) const {
 	const int fall_dy = invert_density ? -1 : 1;
 	const int search = config.dispersion * SETTLED_SEARCH_FACTOR;
 	for (int i = 1; i <= search; ++i) {
-		if (read_cell(x + dir * i, y, world_grid, world_origin).mat_id != 0)
+		// A cell past where gravity turns (see climbs()) is uphill, so as
+		// good as a wall, and a drop must go down.
+		if (read_at(x, y, dir * i, 0, world_grid, world_origin).mat_id != 0 || (!invert_density && climbs(x, y, at(x, y, dir * i, 0), world_grid, world_origin)))
 			return 0;
-		if (can_displace(config, read_cell(x + dir * i, y + fall_dy, world_grid, world_origin), world_grid, invert_density))
+		if (can_displace(config, read_at(x, y, dir * i, fall_dy, world_grid, world_origin), world_grid, invert_density) && (invert_density || !climbs(x, y, at(x, y, dir * i, fall_dy), world_grid, world_origin, true)))
 			return i;
 	}
 	return 0;
@@ -511,7 +549,10 @@ bool SandSimulationChunk::can_displace(const MaterialConfig &src_config, const P
 	return invert_density ? (src_config.density < dst_config.density) : (src_config.density > dst_config.density);
 }
 
-bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density, bool sideways, bool may_settle, const Particle *moving) {
+bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, Vector2i dst, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density, bool sideways, bool may_settle, const Particle *moving) {
+	const int dst_x = dst.x, dst_y = dst.y;
+	// Sideways direction of the move along the frame.
+	const int move_dir = frame.side_of(dst_x - src_x, dst_y - src_y) > 0 ? 1 : -1;
 	const Vector2i source_position = world_origin + Vector2i(src_x, src_y);
 	const Vector2i destination_position = world_origin + Vector2i(dst_x, dst_y);
 	Particle destination = read_cell(dst_x, dst_y, world_grid, world_origin);
@@ -519,6 +560,13 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		return false;
 
 	Particle source = moving != nullptr ? *moving : grid[get_index(src_x, src_y)];
+	// Near a gravity source "down" turns from cell to cell; a fluid sliding
+	// sideways past the edge of one quadrant would end up higher in the
+	// next and creep outward, and a grain could fall back and forth between
+	// two quadrants at the same height. So sideways moves may not climb,
+	// and falls must go down. Only something thrown upward may climb.
+	if (!invert_density && fall_speed(source) >= 0 && climbs(src_x, src_y, dst, world_grid, world_origin, !sideways))
+		return false;
 	// Resting fluid that starts to fall or flow toward a drop pulls the
 	// resting fluid beside it along. Those moves always make progress
 	// downhill, so this never starts an endless back-and-forth, and fluid
@@ -528,7 +576,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	if (sideways) {
 		if (may_settle)
 			source.set_rest(std::min(source.get_rest() + 1, static_cast<int>(Particle::REST_SETTLED)));
-		source.set_flow_dir(dst_x > src_x ? 1 : -1);
+		source.set_flow_dir(move_dir);
 	} else {
 		source.set_rest(0);
 		source.set_following(false);
@@ -543,7 +591,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 		// to the cell it left, e.g. after pressure flow dropped it into a
 		// draining layer.
 		if (src_config.dispersion > 0)
-			pull_sideways_neighbors(src_x, src_y, sideways ? (dst_x > src_x ? 1 : -1) : 0, was_settled ? src_config.dispersion * SETTLED_SEARCH_FACTOR : 1, world_grid, world_origin);
+			pull_sideways_neighbors(src_x, src_y, sideways ? move_dir : 0, was_settled ? src_config.dispersion * SETTLED_SEARCH_FACTOR : 1, world_grid, world_origin);
 		return true;
 	}
 
@@ -552,7 +600,7 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, int dst_x, int 
 	if (!sideways) {
 		destination.set_rest(0);
 		destination.set_following(false);
-		destination.vy = 0;
+		set_velocity(destination, side_speed(destination), 0);
 	}
 	write_cell(src_x, src_y, destination, world_grid, world_origin);
 	write_cell(dst_x, dst_y, source, world_grid, world_origin);
@@ -573,13 +621,14 @@ void SandSimulationChunk::pull_sideways_neighbors(int x, int y, int move_dir, in
 		// The nearest particle on that side, across a short gap, so a layer
 		// already broken up by draining keeps draining.
 		for (int i = 1; i <= search; ++i) {
-			Particle neighbor = read_cell(x + dx * i, y, world_grid, world_origin);
+			const Vector2i cell = at(x, y, dx * i, 0);
+			Particle neighbor = read_cell(cell.x, cell.y, world_grid, world_origin);
 			if (neighbor.mat_id == 0)
 				continue;
 			if (neighbor.is_settled()) {
 				neighbor.set_following(true);
 				neighbor.set_flow_dir(-dx);
-				write_cell(x + dx * i, y, neighbor, world_grid, world_origin);
+				write_cell(cell.x, cell.y, neighbor, world_grid, world_origin);
 			}
 			break;
 		}

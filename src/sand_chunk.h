@@ -1,6 +1,7 @@
 #pragma once
 
 #include "godot_cpp/variant/vector2i.hpp"
+#include "gravity_field.h"
 #include "materialconfig.h"
 #include "particle.h"
 
@@ -81,6 +82,42 @@ private:
 	Particle read_cell(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) const;
 	void write_cell(int x, int y, const Particle &p, WorldGrid &world_grid, Vector2i world_origin);
 
+	// Gravity of the particle being updated. Movement rules are written
+	// with down as +y and sideways as x, and turn with this frame: they
+	// address cells by offsets along it (at(), read_at()) and velocities by
+	// their components along it (fall_speed(), side_speed()).
+	GravityFrame frame;
+
+	// (Plain ints: godot-cpp's Vector2i operators aren't inlined.)
+	Vector2i at(int x, int y, int side, int down) const {
+		return Vector2i(x + side * frame.side_x + down * frame.down_x, y + side * frame.side_y + down * frame.down_y);
+	}
+	Particle read_at(int x, int y, int side, int down, const WorldGrid &world_grid, Vector2i world_origin) const {
+		const Vector2i cell = at(x, y, side, down);
+		return read_cell(cell.x, cell.y, world_grid, world_origin);
+	}
+	int fall_speed(const Particle &p) const { return frame.down_of(p.vx, p.vy); }
+	int side_speed(const Particle &p) const { return frame.side_of(p.vx, p.vy); }
+	// Sets a velocity given along the frame. Components must already fit
+	// in int8.
+	void set_velocity(Particle &p, int side, int down) const {
+		const Vector2i v = frame.to_world(side, down);
+		p.vx = static_cast<std::int8_t>(v.x);
+		p.vy = static_cast<std::int8_t>(v.y);
+	}
+	// Resting liquid: something there and not falling away along the frame.
+	bool is_resting(const Particle &p) const { return p.mat_id != 0 && fall_speed(p) <= 0; }
+
+	// Whether moving from local cell (x, y) to `to` goes up, away from the
+	// gravity source (see GravityField::height_at()), or with `or_level`
+	// doesn't go down. Never true without sources.
+	bool climbs(int x, int y, Vector2i to, const WorldGrid &world_grid, Vector2i world_origin, bool or_level = false) const;
+
+	// Visits the cells of `rect` lowest first along the chunk's gravity,
+	// alternating sideways direction per tick.
+	template <typename Visit>
+	void scan_lowest_first(const DirtyRect &rect, const GravityFrame &chunk_frame, bool alternate_direction, Visit visit);
+
 	bool update_particle(int x, int y, WorldGrid &world_grid, Vector2i world_origin);
 	// Gravity, momentum and friction for powders and liquids: updates the
 	// particle's velocity and moves it along it, stopping at obstacles.
@@ -97,7 +134,7 @@ private:
 	// counter; any other move resets the rest counter, and that of a
 	// particle it displaces. `moving`, if given, is the source particle
 	// with updated velocity to place instead of the one in the grid.
-	bool try_move_or_swap(int src_x, int src_y, int dst_x, int dst_y, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false, bool sideways = false, bool may_settle = false, const Particle *moving = nullptr);
+	bool try_move_or_swap(int src_x, int src_y, Vector2i dst, const MaterialConfig &src_config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density = false, bool sideways = false, bool may_settle = false, const Particle *moving = nullptr);
 	// Distance along dir, through empty cells, to the nearest cell the
 	// fluid could fall (or rise) out of, or 0 if none is within a few
 	// dispersions.

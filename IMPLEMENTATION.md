@@ -55,6 +55,12 @@ SandForge is a high-performance falling sand simulation engine implemented as a 
 - While resting on something, a particle loses `friction`/256 of its sideways speed per tick.
 - `apply_impulse()` (and explosions) push particles outward; a particle that didn't move by velocity falls back to the slide and dispersion rules below.
 
+**Gravity sources**: `add_gravity_source()` (`GravityField`, `gravity_field.h/cpp`) makes cells within a radius fall toward the nearest source instead of +y. Each cell's "down" is a quarter turn of the default, along whichever axis points at the source most directly (vertical on an exact diagonal), so the space round a source is four quadrants.
+- Every movement rule below is written for down = +y and reads and writes cells through the particle's `GravityFrame` (`at()`, `read_at()`, `fall_speed()`, `side_speed()` in `SandSimulationChunk`), so in each quadrant it behaves exactly like the default world rotated. Velocities are stored in world axes and turned into the frame when used.
+- Chunks are simulated lowest first by `GravityField::height_at()` (distance from the source along its quadrant's axis), and each chunk scans its cells lowest first along the gravity at its center.
+- At the diagonal seams between quadrants down turns by 90°. Sideways moves (sliding, dispersion, pressure flow) may not raise a particle's height, and falls must lower it, unless it is moving upward (thrown); `find_drop()` treats such cells as walls. Otherwise liquid crept outward along the seams and grains swapped between quadrants at equal height forever. Material round a source therefore settles into a rounded square and sleeps.
+- With no sources none of this runs: `get_gravity_frame()` returns the default frame and the default chunk order is kept, so a world without sources simulates exactly as before.
+
 **SOLID_POWDER** (sand, gunpowder):
 1. Move by velocity (falling straight down when unsupported)
 2. Try diagonal down-left/down-right (random)

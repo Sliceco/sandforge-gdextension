@@ -17,6 +17,8 @@ var material_names := { 0: "Erase" }
 var paused := false
 var drawing := false
 var show_debug_overlay := false
+# Id of the gravity source at the center of the world, or -1 for none.
+var center_gravity := -1
 var previous_world_position := Vector2i.ZERO
 var image: Image
 var texture: ImageTexture
@@ -146,6 +148,11 @@ func _build_interface() -> void:
 	load_button.pressed.connect(_load_snapshot)
 	controls.add_child(load_button)
 
+	var gravity_checkbox := CheckButton.new()
+	gravity_checkbox.text = "Gravity toward the center"
+	gravity_checkbox.toggled.connect(_on_center_gravity_toggled)
+	controls.add_child(gravity_checkbox)
+
 	debug_checkbox = CheckButton.new()
 	debug_checkbox.text = "Show chunks / dirty rects"
 	debug_checkbox.toggled.connect(_on_debug_overlay_toggled)
@@ -166,6 +173,15 @@ func _create_texture() -> void:
 func _refresh_canvas() -> void:
 	image.set_data(WORLD_SIZE.x, WORLD_SIZE.y, false, Image.FORMAT_RGBA8, world.render_to_texture(WORLD_SIZE, Vector2i.ZERO))
 	texture.update(image)
+
+
+func _on_center_gravity_toggled(pressed: bool) -> void:
+	if pressed:
+		center_gravity = world.add_gravity_source(WORLD_SIZE / 2)
+	else:
+		world.remove_gravity_source(center_gravity)
+		center_gravity = -1
+	_update_status("Gravity pulls toward the center." if pressed else "Gravity pulls down.")
 
 
 func _on_debug_overlay_toggled(pressed: bool) -> void:
