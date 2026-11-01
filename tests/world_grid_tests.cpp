@@ -910,6 +910,116 @@ void test_raycast() {
 		fail("raycast must not allocate chunks");
 }
 
+void test_gravity_field_quadrants() {
+	GravityField field;
+	expect(field.frame_at(5, 5).is_default(), "without sources everything must fall toward +y");
+	const int planet = field.add_source(Vector2i(0, 0), 100);
+	const GravityFrame left = field.frame_at(-10, 3);
+	expect(left.down_x == 1 && left.down_y == 0, "a cell left of a source must fall toward +x");
+	const GravityFrame below = field.frame_at(2, 10);
+	expect(below.down_x == 0 && below.down_y == -1, "a cell below a source must fall toward -y");
+	const GravityFrame corner = field.frame_at(7, -7);
+	expect(corner.down_x == 0 && corner.down_y == 1, "a cell on a diagonal must fall vertically");
+	expect(field.frame_at(150, 0).is_default(), "a cell out of every source's reach must fall toward +y");
+	// The frame is a quarter turn: side is down turned the same way as
+	// (1, 0) is from (0, 1).
+	expect(left.side_x == 0 && left.side_y == -1, "the side axis must turn with down");
+	field.add_source(Vector2i(60, 0), 0);
+	const GravityFrame near_second = field.frame_at(45, 0);
+	expect(near_second.down_x == 1, "a cell must fall toward the nearest source");
+	expect(field.remove_source(planet) && !field.remove_source(planet), "a source must be removable once");
+	expect(field.frame_at(-10, 3).down_x == 1, "the remaining unlimited source reaches everywhere");
+}
+
+// test_raised_water_levels_out() turned a quarter: gravity toward +x, with
+// the default world's (x, y) at (y, -x).
+void test_sideways_gravity_levels_water() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().add_source(Vector2i(100000, 0), 0);
+	auto set = [&](int x, int y, int material) { world.set_particle(y, -x, particle(material)); };
+	for (int x = 39; x <= 201; ++x)
+		set(x, 100, STONE);
+	for (int y = 40; y < 100; ++y) {
+		set(39, y, STONE);
+		set(201, y, STONE);
+	}
+	for (int y = 90; y < 100; ++y) {
+		for (int x = 40; x <= 200; ++x)
+			set(x, y, WATER);
+	}
+	for (int y = 70; y < 90; ++y) {
+		for (int x = 140; x <= 200; ++x)
+			set(x, y, WATER);
+	}
+	// Default (x, y) in [40, 200] x [lo, hi] is world [lo, hi] x [-200, -40].
+	auto count = [&](int lo, int hi) { return count_material(world, lo, -200, hi, -40, WATER); };
+	const int water = count(40, 99);
+	if (tick_until_asleep(world, 600) < 0)
+		fail("water under sideways gravity must level out and settle");
+	if (count(40, 99) != water)
+		fail("levelling under sideways gravity must not create or destroy water");
+	if (count(40, 81) > 4)
+		fail("water levelled sideways must not keep a raised step");
+	if (count(83, 83) != 161)
+		fail("water levelled sideways must fill every row below its surface");
+}
+
+void test_sand_falls_toward_gravity_source() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().add_source(Vector2i(0, 0), 0);
+	for (int y = -3; y <= 3; ++y) {
+		for (int x = -3; x <= 3; ++x)
+			world.set_particle(x, y, particle(STONE));
+	}
+	world.set_particle(30, 0, particle(SAND));
+	world.set_particle(0, -30, particle(SAND));
+	world.set_particle(-30, 1, particle(SAND));
+	world.set_particle(1, 30, particle(SAND));
+	if (tick_until_asleep(world, 200) < 0)
+		fail("sand around a gravity source must come to rest");
+	// A hard landing may scatter a grain sideways along the face it hits.
+	expect(count_material(world, 4, -3, 4, 3, SAND) == 1, "sand right of a source must fall toward -x onto the core");
+	expect(count_material(world, -3, -4, 3, -4, SAND) == 1, "sand above a source must fall toward +y onto the core");
+	expect(count_material(world, -4, -3, -4, 3, SAND) == 1, "sand left of a source must fall toward +x onto the core");
+	expect(count_material(world, -3, 4, 3, 4, SAND) == 1, "sand below a source must fall toward -y onto the core");
+}
+
+// Material poured round a core settles into its four quadrants and goes to
+// sleep. Without care at the seams between quadrants, where down turns,
+// liquid used to creep outward along them and grains to swap back and
+// forth between two quadrants forever.
+void test_material_round_a_source_settles() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().add_source(Vector2i(0, 0), 0);
+	int sand = 0, water = 0;
+	for (int y = -90; y <= 90; ++y) {
+		for (int x = -90; x <= 90; ++x) {
+			const int d2 = x * x + y * y;
+			if (d2 <= 20 * 20) {
+				world.set_particle(x, y, particle(STONE));
+			} else if (d2 <= 40 * 40 && (x + y * 3) % 7 == 0) {
+				world.set_particle(x, y, particle(SAND));
+				++sand;
+			} else if (d2 > 60 * 60 && d2 <= 66 * 66) {
+				world.set_particle(x, y, particle(WATER));
+				++water;
+			}
+		}
+	}
+	if (tick_until_asleep(world, 1500) < 0)
+		fail("material round a gravity source must settle and sleep");
+	if (count_material(world, -200, -200, 200, 200, SAND) != sand || count_material(world, -200, -200, 200, 200, WATER) != water)
+		fail("settling round a gravity source must not create or destroy material");
+	// Everything ends up lower (closer, by the larger axis) than where the
+	// water started.
+	const int outside = count_material(world, -200, -200, 200, -67, WATER) + count_material(world, -200, 67, 200, 200, WATER) + count_material(world, -200, -66, -67, 66, WATER) + count_material(world, 67, -66, 200, 66, WATER);
+	if (outside != 0)
+		fail("liquid round a gravity source must not creep outward");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -944,5 +1054,9 @@ int main() {
 	test_particle_state_queries();
 	test_state_masks_span_chunk_seams();
 	test_raycast();
+	test_gravity_field_quadrants();
+	test_sideways_gravity_levels_water();
+	test_sand_falls_toward_gravity_source();
+	test_material_round_a_source_settles();
 	return EXIT_SUCCESS;
 }
