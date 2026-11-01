@@ -7,8 +7,8 @@
 
 using namespace godot;
 
-// Which way is "down" for a cell. Movement rules are written for the
-// default frame (down is +y, sideways is x) and read and write cells
+// Which way is "down" for a cell, for the movement rules. They are written
+// for the default frame (down is +y, sideways is x) and read and write cells
 // through this frame, so with gravity pointing another way every rule turns
 // with it. Frames are exact quarter turns of the default, so particles
 // behave the same in each of the four directions.
@@ -39,11 +39,33 @@ struct GravityFrame {
 	}
 };
 
-// Point gravity sources. A cell within a source's radius falls toward the
-// nearest one, along whichever axis points at it most directly, so the
-// space around a source splits into four quadrants (a round body settles
-// into a rounded square). Cells outside every source, and every cell when
-// there are none, fall toward +y.
+// Gravity at one cell.
+struct GravitySample {
+	// Index in GravityField::get_sources() of the source pulling the cell,
+	// or -1 outside every source.
+	int source = -1;
+	// No gravity at all: outside every source, with gravity outside sources
+	// turned off. Loose material then only drifts by its velocity.
+	bool weightless = false;
+	// The true direction of the pull (a unit vector) and its strength as a
+	// multiple of the world's gravity.
+	double dir_x = 0.0, dir_y = 1.0;
+	double strength = 1.0;
+	// The pull's direction rounded to a quarter turn, for the movement rules.
+	GravityFrame frame;
+	// Squared distance to the source's position (0 outside every source).
+	std::int64_t distance_squared = 0;
+};
+
+// Point gravity sources. A source pulls everything within its radius toward
+// its position. Where sources overlap, the strongest pull wins: the source
+// with the smallest distance divided by strength. Outside every source,
+// everything falls toward +y, or (with gravity outside sources off) floats.
+//
+// Movement rules turn in quarter turns (see GravityFrame), along whichever
+// axis points at the source most directly, but "height" is the true distance
+// to the source (see level()): fluids spread sideways only along a level and
+// falls must get closer, so seas settle into rings round a source.
 class GravityField {
 public:
 	struct Source {
@@ -51,40 +73,59 @@ public:
 		Vector2i position;
 		// Reach in cells; 0 reaches the whole world.
 		int radius = 0;
+		// Multiple of the world's gravity; above 0.
+		double strength = 1.0;
 	};
 
 	// Returns the new source's id.
-	int add_source(Vector2i position, int radius);
+	int add_source(Vector2i position, int radius, double strength = 1.0);
 	bool remove_source(int id);
 	void clear() { sources.clear(); }
 	bool empty() const { return sources.empty(); }
 	const std::vector<Source> &get_sources() const { return sources; }
 
-	GravityFrame frame_at(int world_x, int world_y) const {
-		if (sources.empty())
-			return GravityFrame();
-		return frame_toward(nearest(world_x, world_y), world_x, world_y);
+	void set_gravity_outside_sources(bool enabled) { gravity_outside_sources = enabled; }
+	bool get_gravity_outside_sources() const { return gravity_outside_sources; }
+
+	// Everything falls toward +y: no sources, and gravity outside them.
+	bool is_uniform() const { return sources.empty() && gravity_outside_sources; }
+
+	GravitySample sample(int world_x, int world_y) const;
+	// The pull at a point in cell units (cell (x, y) covers [x, x + 1)),
+	// for bodies that move smoothly: measured from the source cell's
+	// center. Only the direction, strength, source and weightless fields
+	// are filled in.
+	GravitySample sample_point(double x, double y) const;
+
+	std::int64_t distance_squared(int source, int world_x, int world_y) const {
+		const std::int64_t dx = static_cast<std::int64_t>(sources[source].position.x) - world_x;
+		const std::int64_t dy = static_cast<std::int64_t>(sources[source].position.y) - world_y;
+		return dx * dx + dy * dy;
 	}
 
+	// Whole cells of distance: cells on the same level count as level ground.
+	static std::int64_t level(std::int64_t distance_squared);
+
 	// Ordering key for simulating regions "lowest first", so falling
-	// material clears space below before what is above it moves: distance
-	// from the source along its quadrant's axis inside a source, and height
-	// (-y) outside every source, which always sorts after the inside.
+	// material clears space below before what is above it moves: the
+	// distance to the source pulling a point, or its height (-y) outside
+	// every source, which sorts after every source.
 	struct Height {
-		bool outside = true;
+		int zone = 0;
 		std::int64_t value = 0;
 		bool operator<(const Height &other) const {
-			return outside != other.outside ? !outside : value < other.value;
+			return zone != other.zone ? zone < other.zone : value < other.value;
 		}
-		bool operator!=(const Height &other) const { return outside != other.outside || value != other.value; }
+		bool operator!=(const Height &other) const { return zone != other.zone || value != other.value; }
 	};
 	Height height_at(int world_x, int world_y) const;
 
 private:
-	// The nearest source reaching the cell, or nullptr.
-	const Source *nearest(int world_x, int world_y) const;
-	static GravityFrame frame_toward(const Source *source, int world_x, int world_y);
+	// Index of the source pulling the point (offset from source positions
+	// by `center`, 0 for cells and 0.5 for points), or -1.
+	int pulling(double x, double y, double center) const;
 
 	std::vector<Source> sources;
+	bool gravity_outside_sources = true;
 	int next_id = 1;
 };

@@ -7,6 +7,7 @@
 #include "world_grid.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 using namespace godot;
@@ -26,6 +27,10 @@ constexpr int SETTLED_PRESSURE_INTERVAL = 4;
 constexpr int PRESSURE_CROSS_FALLING_CELLS = 64;
 constexpr int PRESSURE_DRAIN_CELLS = 4;
 constexpr int PRESSURE_RUN_CELLS = 128;
+
+// How far a surface particle walks along the surface for a lower spot near
+// a gravity source (see try_level_flow()).
+constexpr int LEVEL_FLOW_CELLS = 32;
 
 // How many times its dispersion a fluid looks sideways for a cell it could
 // fall into before settling, and once settled.
@@ -80,8 +85,7 @@ void SandSimulationChunk::tick(bool alternate_direction, WorldGrid &world_grid, 
 	// "Bottom" follows the gravity at the chunk's center; cells whose own
 	// gravity points another way (near a source) may move a tick later
 	// than they could, which the UPDATED flag keeps safe.
-	const GravityField &gravity_field = world_grid.get_gravity_field();
-	const GravityFrame chunk_frame = gravity_field.empty() ? GravityFrame() : gravity_field.frame_at(world_origin.x + SIZE / 2, world_origin.y + SIZE / 2);
+	const GravityFrame chunk_frame = world_grid.get_gravity_at(world_origin.x + SIZE / 2, world_origin.y + SIZE / 2).frame;
 	scan_lowest_first(active_rect, chunk_frame, alternate_direction, [&](int x, int y) {
 		update_particle(x, y, world_grid, world_origin);
 	});
@@ -124,12 +128,14 @@ void SandSimulationChunk::scan_lowest_first(const DirtyRect &rect, const Gravity
 }
 
 bool SandSimulationChunk::climbs(int x, int y, Vector2i to, const WorldGrid &world_grid, Vector2i world_origin, bool or_level) const {
-	const GravityField &gravity_field = world_grid.get_gravity_field();
-	if (gravity_field.empty())
+	if (gravity.source < 0)
 		return false;
-	const GravityField::Height from = gravity_field.height_at(world_origin.x + x, world_origin.y + y);
-	const GravityField::Height dest = gravity_field.height_at(world_origin.x + to.x, world_origin.y + to.y);
-	return or_level ? !(dest < from) : from < dest;
+	const GravityField &gravity_field = world_grid.get_gravity_field();
+	const std::int64_t from = gravity_field.distance_squared(gravity.source, world_origin.x + x, world_origin.y + y);
+	const std::int64_t dest = gravity_field.distance_squared(gravity.source, world_origin.x + to.x, world_origin.y + to.y);
+	if (or_level)
+		return dest >= from;
+	return dest > from && GravityField::level(dest) > GravityField::level(from);
 }
 
 Particle SandSimulationChunk::read_cell(int x, int y, const WorldGrid &world_grid, Vector2i world_origin) const {
@@ -169,7 +175,14 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 		return false;
 
 	SimRandom &random = world_grid.get_random();
-	frame = world_grid.get_gravity_frame(world_origin.x + x, world_origin.y + y);
+	gravity = world_grid.get_gravity_at(world_origin.x + x, world_origin.y + y);
+	frame = gravity.frame;
+	// Without gravity loose material only drifts by its velocity.
+	if (gravity.weightless) {
+		if (config.state == MatterState::SOLID_POWDER || config.state == MatterState::LIQUID)
+			return update_motion(x, y, config, world_grid, world_origin);
+		return false;
+	}
 
 	// Try moving down (Powders and Liquids)
 	if (config.state == MatterState::SOLID_POWDER || config.state == MatterState::LIQUID) {
@@ -186,6 +199,8 @@ bool SandSimulationChunk::update_particle(int x, int y, WorldGrid &world_grid, V
 
 	// Horizontal dispersion (Liquids only)
 	if (config.state == MatterState::LIQUID) {
+		if (gravity.source >= 0 && try_level_flow(x, y, world_grid, world_origin))
+			return true;
 		if (try_pressure_flow(x, y, world_grid, world_origin))
 			return true;
 		int side_dir = p.get_flow_dir() != 0 ? p.get_flow_dir() : random.next_sign();
@@ -246,10 +261,18 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 
 	// Something falling below isn't support: follow it down instead of
 	// landing on it.
+	const bool weightless = gravity.weightless;
 	const Particle below = read_at(x, y, 0, 1, world_grid, world_origin);
-	const bool supported = !can_displace(config, below, world_grid, false) && fall_speed(below) <= 0;
-	if (!supported || vy < 0)
-		vy = std::min(vy + world_grid.get_gravity(), world_grid.get_max_fall_speed());
+	const bool supported = !weightless && !can_displace(config, below, world_grid, false) && fall_speed(below) <= 0;
+	if (!weightless && (!supported || vy < 0)) {
+		// Gravity pulls along its true direction, so near a source things
+		// fall toward it rather than along the frame's axis.
+		const double pull = world_grid.get_gravity() * gravity.strength;
+		const int ax = static_cast<int>(std::lround(pull * gravity.dir_x));
+		const int ay = static_cast<int>(std::lround(pull * gravity.dir_y));
+		vx += frame.side_of(ax, ay);
+		vy = std::min(vy + frame.down_of(ax, ay), world_grid.get_max_fall_speed());
+	}
 	if (supported) {
 		if (vy > 0)
 			land(vx, vy, config, random);
@@ -261,7 +284,7 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 	int dy = cells_this_tick(vy, world_grid.get_tick_count());
 	// Anything unsupported falls at least a cell per tick, as without
 	// velocity, even before gravity has built up speed.
-	if (!supported && vy >= 0 && dy == 0)
+	if (!weightless && !supported && vy >= 0 && dy == 0)
 		dy = 1;
 
 	// Walk the path a cell at a time and stop before the first obstacle,
@@ -297,6 +320,10 @@ bool SandSimulationChunk::update_motion(int x, int y, const MaterialConfig &conf
 			end_y = cy;
 			vx /= 2;
 			vy = std::min(vy, Particle::VELOCITY_SCALE);
+		} else if (weightless) {
+			// Drifting into something just stops it.
+			vx = 0;
+			vy = 0;
 		} else if (blocked_down || !blocked_side) {
 			const Particle under = read_at(x, y, end_x, cy, world_grid, world_origin);
 			if (vy > 0 && under.mat_id != 0 && fall_speed(under) > 0)
@@ -471,6 +498,92 @@ bool SandSimulationChunk::try_pressure_move(int x, int y, WorldGrid &world_grid,
 	return true;
 }
 
+bool SandSimulationChunk::try_level_flow(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	Particle self = grid[get_index(x, y)];
+	// Only a surface particle at rest on its own liquid.
+	if (fall_speed(self) != 0 || read_at(x, y, 0, -1, world_grid, world_origin).mat_id != 0 || read_at(x, y, 0, 1, world_grid, world_origin).mat_id != self.mat_id)
+		return false;
+	const GravityField &gravity_field = world_grid.get_gravity_field();
+	const std::int64_t own_level = GravityField::level(gravity.distance_squared);
+	std::int64_t best_d2 = 0;
+	Vector2i best;
+	bool found = false;
+	auto consider = [&](Vector2i cell) {
+		const std::int64_t d2 = gravity_field.distance_squared(gravity.source, world_origin.x + cell.x, world_origin.y + cell.y);
+		if (GravityField::level(d2) < own_level && (!found || d2 < best_d2)) {
+			best = cell;
+			best_d2 = d2;
+			found = true;
+		}
+	};
+	for (int dir : { -1, 1 }) {
+		// Follow the surface sideways (and down the steps it takes along the
+		// way), through liquid at rest. Each empty cell resting on it is a
+		// spot the particle could flow to.
+		int down = 0;
+		for (int i = 1; i <= LEVEL_FLOW_CELLS; ++i) {
+			const Particle cell = read_at(x, y, dir * i, down, world_grid, world_origin);
+			if (cell.mat_id == self.mat_id && fall_speed(cell) == 0) {
+				// The surface carries on (or steps up, where it stops).
+				if (read_at(x, y, dir * i, down - 1, world_grid, world_origin).mat_id != 0)
+					break;
+				consider(at(x, y, dir * i, down - 1));
+				continue;
+			}
+			if (cell.mat_id != 0)
+				break;
+			// The surface steps down: find where something empty rests.
+			int step = 0;
+			while (step < LEVEL_FLOW_CELLS && read_at(x, y, dir * i, down + 1, world_grid, world_origin).mat_id == 0) {
+				++down;
+				++step;
+			}
+			const Particle floor = read_at(x, y, dir * i, down + 1, world_grid, world_origin);
+			if (floor.mat_id == 0)
+				break;
+			consider(at(x, y, dir * i, down));
+			// Only carry on along more of the same liquid at rest.
+			if (floor.mat_id != self.mat_id || fall_speed(floor) != 0)
+				break;
+			++down;
+		}
+	}
+	if (!found)
+		return false;
+	self.flags |= ParticleFlags::PARTICLE_FLAG_UPDATED;
+	self.set_rest(0);
+	self.set_following(false);
+	self.vx = 0;
+	self.vy = 0;
+	write_cell(x, y, Particle(), world_grid, world_origin);
+	write_cell(best.x, best.y, self, world_grid, world_origin);
+	world_grid.mark_particle_updated(world_origin.x + best.x, world_origin.y + best.y);
+	wake_surface_row(x, y, world_grid, world_origin);
+	return true;
+}
+
+void SandSimulationChunk::wake_surface_row(int x, int y, WorldGrid &world_grid, Vector2i world_origin) {
+	// Dirty rects are boxes, so waking the far ends (and the row above
+	// them) covers the row in between; a row crossing into a neighbor
+	// chunk wakes that chunk's part separately.
+	for (int dir : { -1, 1 }) {
+		for (int up : { 0, -1 }) {
+			const Vector2i end = at(x, y, dir * LEVEL_FLOW_CELLS, up);
+			const Vector2i near = at(x, y, dir, up);
+			for (const Vector2i &cell : { end, near }) {
+				if (in_bounds(cell.x, cell.y))
+					mark_dirty(cell.x, cell.y);
+				else
+					world_grid.wake_cell(world_origin.x + cell.x, world_origin.y + cell.y);
+			}
+			if (!in_bounds(end.x, end.y)) {
+				// Clamp the in-chunk part of the row to this chunk's edge.
+				mark_dirty(std::clamp(end.x, 0, SIZE - 1), std::clamp(end.y, 0, SIZE - 1));
+			}
+		}
+	}
+}
+
 bool SandSimulationChunk::try_disperse(int x, int y, int dir, const MaterialConfig &config, WorldGrid &world_grid, Vector2i world_origin, bool invert_density) {
 	if (config.dispersion == 0)
 		return false;
@@ -582,6 +695,8 @@ bool SandSimulationChunk::try_move_or_swap(int src_x, int src_y, Vector2i dst, c
 		source.set_following(false);
 	}
 
+	if (src_config.state == MatterState::LIQUID && gravity.source >= 0)
+		wake_surface_row(dst_x, dst_y, world_grid, world_origin);
 	if (destination.mat_id == 0) {
 		write_cell(src_x, src_y, Particle(), world_grid, world_origin);
 		write_cell(dst_x, dst_y, source, world_grid, world_origin);

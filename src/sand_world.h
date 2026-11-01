@@ -83,10 +83,13 @@ public:
 	float get_max_fall_speed() const;
 
 	// Point gravity sources (see GravityField).
-	int add_gravity_source(Vector2i position, int radius = 0);
+	int add_gravity_source(Vector2i position, int radius = 0, float strength = 1.0f);
 	bool remove_gravity_source(int id);
 	void clear_gravity_sources();
+	void set_gravity_outside_sources(bool enabled);
+	bool get_gravity_outside_sources() const;
 	Vector2i get_gravity_direction(Vector2i pos) const;
+	Vector2 get_gravity_vector(Vector2 position) const;
 
 	// Rendering
 	PackedByteArray render_to_texture(Vector2i texture_size, Vector2i world_offset);

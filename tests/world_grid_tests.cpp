@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -912,23 +913,23 @@ void test_raycast() {
 
 void test_gravity_field_quadrants() {
 	GravityField field;
-	expect(field.frame_at(5, 5).is_default(), "without sources everything must fall toward +y");
+	expect(field.sample(5, 5).frame.is_default(), "without sources everything must fall toward +y");
 	const int planet = field.add_source(Vector2i(0, 0), 100);
-	const GravityFrame left = field.frame_at(-10, 3);
+	const GravityFrame left = field.sample(-10, 3).frame;
 	expect(left.down_x == 1 && left.down_y == 0, "a cell left of a source must fall toward +x");
-	const GravityFrame below = field.frame_at(2, 10);
+	const GravityFrame below = field.sample(2, 10).frame;
 	expect(below.down_x == 0 && below.down_y == -1, "a cell below a source must fall toward -y");
-	const GravityFrame corner = field.frame_at(7, -7);
+	const GravityFrame corner = field.sample(7, -7).frame;
 	expect(corner.down_x == 0 && corner.down_y == 1, "a cell on a diagonal must fall vertically");
-	expect(field.frame_at(150, 0).is_default(), "a cell out of every source's reach must fall toward +y");
+	expect(field.sample(150, 0).frame.is_default(), "a cell out of every source's reach must fall toward +y");
 	// The frame is a quarter turn: side is down turned the same way as
 	// (1, 0) is from (0, 1).
 	expect(left.side_x == 0 && left.side_y == -1, "the side axis must turn with down");
 	field.add_source(Vector2i(60, 0), 0);
-	const GravityFrame near_second = field.frame_at(45, 0);
+	const GravityFrame near_second = field.sample(45, 0).frame;
 	expect(near_second.down_x == 1, "a cell must fall toward the nearest source");
 	expect(field.remove_source(planet) && !field.remove_source(planet), "a source must be removable once");
-	expect(field.frame_at(-10, 3).down_x == 1, "the remaining unlimited source reaches everywhere");
+	expect(field.sample(-10, 3).frame.down_x == 1, "the remaining unlimited source reaches everywhere");
 }
 
 // test_raised_water_levels_out() turned a quarter: gravity toward +x, with
@@ -1020,6 +1021,110 @@ void test_material_round_a_source_settles() {
 		fail("liquid round a gravity source must not creep outward");
 }
 
+void test_gravity_field_zones() {
+	GravityField field;
+	const int left = field.add_source(Vector2i(-100, 0), 150);
+	field.add_source(Vector2i(100, 0), 150);
+	const GravitySample near_left = field.sample(-1, 0);
+	expect(near_left.source == 0 && near_left.frame.down_x == -1, "between equal sources the nearer must pull");
+	expect(field.sample(1, 0).source == 1, "past the midpoint the other source must pull");
+	const GravitySample diagonal = field.sample(-70, -30);
+	expect(std::abs(diagonal.dir_x + std::sqrt(0.5)) < 1e-9 && std::abs(diagonal.dir_y - std::sqrt(0.5)) < 1e-9, "the pull must point straight at the source");
+	expect(diagonal.frame.down_y == 1, "the frame must follow the axis that points at the source most directly");
+	// Twice as strong pulls from twice as far: the zones now meet at x = 33.
+	field.remove_source(left);
+	field.add_source(Vector2i(-100, 0), 150, 2.0);
+	expect(field.get_sources()[field.sample(30, 0).source].strength == 2.0 && field.sample(36, 0).source == 0, "a stronger source must pull from further away");
+	expect(field.sample(0, 400).source == -1 && !field.sample(0, 400).weightless, "outside every source, gravity must pull toward +y by default");
+	field.set_gravity_outside_sources(false);
+	expect(field.sample(0, 400).weightless, "outside every source, gravity outside sources off means no gravity");
+	expect(!field.sample(-90, 0).weightless, "inside a source gravity must still pull");
+}
+
+// Water poured round a core must settle into a ring of even depth, not
+// pool where two quadrants meet.
+void test_water_round_a_source_settles_into_a_ring() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().add_source(Vector2i(0, 0), 0);
+	int water = 0;
+	for (int y = -80; y <= 80; ++y) {
+		for (int x = -80; x <= 80; ++x) {
+			const int d2 = x * x + y * y;
+			if (d2 <= 20 * 20) {
+				world.set_particle(x, y, particle(STONE));
+			} else if (d2 > 50 * 50 && d2 <= 56 * 56 && x > -20) {
+				// A lopsided shell, so levelling has to move water round.
+				world.set_particle(x, y, particle(WATER));
+				++water;
+			}
+		}
+	}
+	if (tick_until_asleep(world, 3000) < 0)
+		fail("water round a gravity source must settle and sleep");
+	if (count_material(world, -100, -100, 100, 100, WATER) != water)
+		fail("levelling round a gravity source must not create or destroy water");
+	// The outermost water along each of 72 directions.
+	int lowest = 1000, highest = 0;
+	for (int i = 0; i < 72; ++i) {
+		const double angle = i * 3.14159265358979 / 36.0;
+		int surface = 0;
+		for (int r = 20; r < 100; ++r) {
+			const int x = static_cast<int>(std::lround(std::cos(angle) * r));
+			const int y = static_cast<int>(std::lround(std::sin(angle) * r));
+			if (world.get_particle_readonly(x, y).mat_id == WATER)
+				surface = r;
+		}
+		lowest = std::min(lowest, surface);
+		highest = std::max(highest, surface);
+	}
+	if (lowest < 20 || highest - lowest > 3)
+		fail("water round a gravity source must level into a ring");
+}
+
+void test_sand_falls_along_the_pull() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().add_source(Vector2i(0, 0), 0);
+	for (int y = -10; y <= 10; ++y) {
+		for (int x = -10; x <= 10; ++x) {
+			if (x * x + y * y <= 100)
+				world.set_particle(x, y, particle(STONE));
+		}
+	}
+	// Dropped at about 40 degrees off the axis, it falls straight at the
+	// source, not along the axis and then round.
+	world.set_particle(45, -38, particle(SAND));
+	if (tick_until_asleep(world, 300) < 0)
+		fail("sand falling toward a source must come to rest");
+	bool near_line = false;
+	for (int y = -20; y <= 0; ++y) {
+		for (int x = 0; x <= 20; ++x) {
+			if (world.get_particle_readonly(x, y).mat_id == SAND)
+				near_line = std::abs(std::atan2(-y, x) - std::atan2(38.0, 45.0)) < 0.25;
+		}
+	}
+	if (!near_line)
+		fail("sand must fall along the true direction of the pull");
+}
+
+void test_weightless_material_drifts() {
+	WorldGrid world;
+	configure_materials(world);
+	world.get_gravity_field().set_gravity_outside_sources(false);
+	world.set_particle(30, 0, particle(STONE));
+	world.set_particle(0, 0, particle(SAND));
+	world.set_particle(0, 10, particle(WATER));
+	world.set_particle_velocity(0, 0, Particle::VELOCITY_SCALE, 0);
+	for (int i = 0; i < 10; ++i)
+		world.tick();
+	expect_material(world, 10, 0, SAND, "weightless sand must drift by its velocity");
+	expect_material(world, 0, 10, WATER, "weightless water at rest must stay put");
+	if (tick_until_asleep(world, 100) < 0)
+		fail("drifting material must come to rest when it hits something");
+	expect_material(world, 29, 0, SAND, "drifting sand must stop at what it hits");
+}
+
 int main() {
 	test_vertical_crossing_updates_once();
 	test_diagonal_crossing_updates_once();
@@ -1058,5 +1163,9 @@ int main() {
 	test_sideways_gravity_levels_water();
 	test_sand_falls_toward_gravity_source();
 	test_material_round_a_source_settles();
+	test_gravity_field_zones();
+	test_water_round_a_source_settles_into_a_ring();
+	test_sand_falls_along_the_pull();
+	test_weightless_material_drifts();
 	return EXIT_SUCCESS;
 }
