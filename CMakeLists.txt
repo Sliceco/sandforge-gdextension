@@ -57,8 +57,6 @@ target_sources(${LIBNAME}
     src/register_types.h
     src/example_class.cpp
     src/example_class.h
-    src/gravity_field.cpp
-    src/gravity_field.h
     src/sand_chunk.cpp
     src/sand_chunk.h
     src/world_grid.cpp
@@ -101,7 +99,6 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(sandforge-world-grid-tests
         tests/world_grid_tests.cpp
-        src/gravity_field.cpp
         src/sand_chunk.cpp
         src/world_grid.cpp
     )

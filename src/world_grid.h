@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "godot_cpp/variant/vector2i.hpp"
-#include "gravity_field.h"
 #include "material_registry.h"
 #include "sand_chunk.h"
 #include "sim_random.h"
@@ -122,21 +121,6 @@ public:
 	int get_max_fall_speed() const { return max_fall_speed; }
 	void set_max_fall_speed(int value) { max_fall_speed = std::clamp(value, Particle::VELOCITY_SCALE, 127); }
 
-	// Point gravity sources; with none, everything falls toward +y. The
-	// gravity above is scaled by each source's strength.
-	GravityField &get_gravity_field() { return gravity_field; }
-	const GravityField &get_gravity_field() const { return gravity_field; }
-	GravitySample get_gravity_at(int world_x, int world_y) const {
-		return gravity_field.is_uniform() ? GravitySample() : gravity_field.sample(world_x, world_y);
-	}
-
-	// Marks every chunk fully dirty, e.g. after gravity changed direction,
-	// so resting material re-evaluates.
-	void wake_all_chunks();
-	// Marks a cell (and its neighbors) for simulation next tick without
-	// changing it; no-op where no chunk exists.
-	void wake_cell(int world_x, int world_y);
-
 	// Ticks since the world was cleared or loaded. Particles at the same
 	// speed use it to move in lockstep (see SandSimulationChunk).
 	std::uint32_t get_tick_count() const { return tick_count; }
@@ -144,7 +128,7 @@ public:
 	// Pushes every powder and liquid within `radius` of a cell away from it:
 	// `strength` (in 1/Particle::VELOCITY_SCALE cells per tick) at the
 	// center, falling off linearly to 0 just past the radius. Particles at
-	// the center are pushed straight up, against the gravity there.
+	// the center are pushed straight up.
 	void apply_impulse(int center_x, int center_y, int radius, int strength);
 
 	// Sets the velocity of the particle at a cell, waking it; no-op on an
@@ -204,7 +188,6 @@ private:
 	std::uint32_t tick_count = 0;
 	int gravity = DEFAULT_GRAVITY;
 	int max_fall_speed = DEFAULT_MAX_FALL_SPEED;
-	GravityField gravity_field;
 	std::string last_error;
 	MaterialRegistry materials;
 	SimRandom random;
